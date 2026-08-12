@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-build-tags.sh — source-time guard for ICU regression.
 #
-# Scans tracked scripts, CI workflows, and git hooks. Fails when a
+# Scans tracked shell scripts, git hooks, and the Makefile. Fails when a
 # `go build|test|run|generate|install` invocation neither:
 #   (a) carries -tags=...gms_pure_go itself, nor
 #   (b) appears in a file that sources .buildflags beforehand, nor
@@ -12,6 +12,9 @@
 # scanned file invokes Bazel, the script instead requires .bazelrc to set
 # `--@rules_go//go/config:tags=...gms_pure_go` for build (and so test/run).
 #
+# GitHub Actions `run` steps are no longer scanned here; they are checked
+# structurally by scripts/checkworkflowtags.
+#
 # This is the source-time companion to scripts/verify-cgo.sh (which is a
 # runtime check on release binaries). See engdocs/ICU-POLICY.md.
 
@@ -21,12 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Candidate files: shell scripts, workflows, git hooks, the Makefile.
+# Candidate files: shell scripts, git hooks, and the Makefile. Workflow `run`
+# steps are checked structurally by scripts/checkworkflowtags.
 mapfile -t candidates < <(
     git ls-files \
         '*.sh' \
-        '.github/workflows/*.yml' \
-        '.github/workflows/*.yaml' \
         '.github/scripts/*' \
         '.githooks/*' \
         'Makefile' 2>/dev/null || true
