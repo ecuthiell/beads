@@ -49,6 +49,8 @@ func Resolve() (string, error) {
 // Probe verifies a caller-specific Bash capability under an environment
 // derived from the supplied entries. Bash startup, option, and
 // exported-function controls are removed before the probe runs.
+// The script must produce no stdout or stderr and must not exit the shell,
+// even with status zero: successful probes must reach the sentinel epilogue.
 func Probe(path, capability, script string, environment []string) error {
 	return runProbe(path, capability, script, sanitizedEnvironment(environment))
 }

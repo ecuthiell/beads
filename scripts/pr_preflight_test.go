@@ -667,8 +667,6 @@ esac
 		"HOME="+msysPath(t.TempDir()),
 		"LC_ALL=C",
 		"LANG=C",
-		"BASH_ENV=",
-		"ENV=",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
