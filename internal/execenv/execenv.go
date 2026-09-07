@@ -7,11 +7,28 @@ import (
 	"strings"
 )
 
+// A single host seam lets package tests exercise the exported wrappers for
+// both key policies without changing the process environment.
+var hostOS = runtime.GOOS
+
 // KeyEqual reports whether left and right identify the same environment key
 // for a subprocess on the current host. Windows keys are case-insensitive;
 // keys on other hosts are exact.
 func KeyEqual(left, right string) bool {
-	return keyEqualForWindows(left, right, runtime.GOOS == "windows")
+	return KeyEqualForOS(left, right, hostOS)
+}
+
+// KeyEqualForOS compares environment keys using goos subprocess semantics.
+func KeyEqualForOS(left, right, goos string) bool {
+	return keyEqualForWindows(left, right, goos == "windows")
+}
+
+// KeyHasPrefixForOS compares a key, rather than an environment entry, with a
+// prefix using goos subprocess semantics. Valueless-entry policy belongs to
+// the caller.
+func KeyHasPrefixForOS(key, prefix, goos string) bool {
+	windows := goos == "windows"
+	return strings.HasPrefix(keyIdentityForWindows(key, windows), keyIdentityForWindows(prefix, windows))
 }
 
 func keyEqualForWindows(left, right string, windows bool) bool {
@@ -21,7 +38,7 @@ func keyEqualForWindows(left, right string, windows bool) bool {
 // ContainsKeyWithPrefix reports whether env contains a key beginning with one
 // of prefixes, using the current host's environment-key semantics.
 func ContainsKeyWithPrefix(env []string, prefixes ...string) bool {
-	return containsKeyWithPrefixForWindows(env, runtime.GOOS == "windows", prefixes...)
+	return containsKeyWithPrefixForWindows(env, hostOS == "windows", prefixes...)
 }
 
 func containsKeyWithPrefixForWindows(env []string, windows bool, prefixes ...string) bool {
@@ -47,7 +64,7 @@ func containsKeyWithPrefixForWindows(env []string, windows bool, prefixes ...str
 // Lookup returns the last value for key in env, matching os/exec's last-wins
 // handling of duplicate effective keys.
 func Lookup(env []string, key string) (string, bool) {
-	return lookupForWindows(env, key, runtime.GOOS == "windows")
+	return lookupForWindows(env, key, hostOS == "windows")
 }
 
 func lookupForWindows(env []string, key string, windows bool) (string, bool) {
@@ -67,7 +84,12 @@ func lookupForWindows(env []string, key string, windows bool) (string, bool) {
 // duplicates, malformed entries, and Windows drive pseudo-variables are
 // preserved in their original order. The input slice is not modified.
 func Without(env []string, keys ...string) []string {
-	return withoutForWindows(env, runtime.GOOS == "windows", keys...)
+	return WithoutForOS(env, hostOS, keys...)
+}
+
+// WithoutForOS is Without with explicit goos environment-key semantics.
+func WithoutForOS(env []string, goos string, keys ...string) []string {
+	return withoutForWindows(env, goos == "windows", keys...)
 }
 
 func withoutForWindows(env []string, windows bool, keys ...string) []string {
