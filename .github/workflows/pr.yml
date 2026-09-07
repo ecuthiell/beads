@@ -1199,7 +1199,6 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'go.mod') -Destination $fixtureRepo
 
           $sentinel = Join-Path $buildDir 'bd.exe'
-          $env:BEADS_FAKE_GO_EXPECTED_OUTPUT = $sentinel
           $fakeGo = Join-Path $fakeGoDir 'go'
           $fakeGoScript = @'
           #!/usr/bin/env bash
@@ -1232,16 +1231,18 @@ jobs:
             ($fakeGoScript -replace "`r`n", "`n"),
             [Text.UTF8Encoding]::new($false)
           )
-          $buildProofPath = $env:PATH
+          $priorPath = $env:PATH
           Push-Location $fixtureRepo
           try {
-            $env:PATH = "$fakeGoDir;$buildProofPath"
+            $env:BEADS_FAKE_GO_EXPECTED_OUTPUT = $sentinel
+            $env:PATH = "$fakeGoDir;$priorPath"
             & $make --no-print-directory "BUILD_DIR=$buildDir" GIT_BUILD=build-proof CC=proof build
             if ($LASTEXITCODE -ne 0) {
               throw 'Native Make build failed for a spaced BUILD_DIR'
             }
           } finally {
-            $env:PATH = $buildProofPath
+            $env:PATH = $priorPath
+            Remove-Item -LiteralPath Env:BEADS_FAKE_GO_EXPECTED_OUTPUT
             Pop-Location
           }
           if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf)) {
