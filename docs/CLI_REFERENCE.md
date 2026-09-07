@@ -4204,7 +4204,7 @@ bd preflight [flags]
 
 ```
       --check       Run checks automatically
-      --fix         Auto-fix issues where possible (vendorHash)
+      --fix         Auto-fix issues where possible (not yet implemented)
       --json        Output results as JSON
       --skip-lint   Skip lint check explicitly
 ```
