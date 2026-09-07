@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -862,6 +863,7 @@ func isGitTrackedFile(path string) bool {
 	// #nosec G204 G702 - fixed "git" command; dir/base come from the hooks
 	// directory bd itself resolved, not user input
 	cmd := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", base)
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	return cmd.Run() == nil
 }
 
