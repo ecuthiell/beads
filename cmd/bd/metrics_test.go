@@ -230,6 +230,8 @@ func TestFirstRunNoticeSuppressedByContext(t *testing.T) {
 		})
 	}
 
+	// JSON cleanup belongs to each child; quiet and hook-JSON retain the
+	// parent's shared reset and restoration.
 	for _, mode := range []struct {
 		name string
 		set  func(*testing.T)
