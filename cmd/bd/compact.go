@@ -777,17 +777,27 @@ func runCompactDolt(ctx context.Context) error {
 			fmt.Printf("The active database is not available for local external garbage collection.\n")
 			return nil
 		}
-		return fmt.Errorf("cannot select a local database for external Dolt garbage collection: %w", pathErr)
+		return HandleErrorWithHint(
+			fmt.Sprintf("cannot select a local database for external Dolt garbage collection: %v", pathErr),
+			"--dolt requires a locally managed owned/shared Dolt database. Port overrides (BEADS_DOLT_SERVER_PORT/BEADS_DOLT_PORT), "+
+				"external/gateway/proxied servers, and socket/TLS connections do not authorize local GC; owned mode also requires auto-start. "+
+				"Run 'bd doctor' to inspect the connection or ask the server administrator to run GC.")
 	}
 	if !filepath.IsAbs(doltPath) {
-		return fmt.Errorf("external Dolt garbage collection requires an absolute active database directory, got %q", doltPath)
+		return HandleErrorWithHint(
+			fmt.Sprintf("external Dolt garbage collection requires an absolute active database directory, got %q", doltPath),
+			"run 'bd doctor' and correct the active database configuration to use an absolute directory")
 	}
 	info, err := os.Stat(doltPath)
 	if err != nil {
-		return fmt.Errorf("active Dolt database directory is unavailable: %w", err)
+		return HandleErrorWithHint(
+			fmt.Sprintf("active Dolt database directory is unavailable: %v", err),
+			"check that the active database directory exists and is accessible; run 'bd doctor' to inspect the database configuration")
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("active Dolt database path %q is not a directory", doltPath)
+		return HandleErrorWithHint(
+			fmt.Sprintf("active Dolt database path %q is not a directory", doltPath),
+			"run 'bd doctor' and correct the active database configuration to point to a directory, not a file")
 	}
 
 	// Measure only the active database. The shared .beads/dolt root may contain
