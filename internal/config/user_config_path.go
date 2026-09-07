@@ -25,27 +25,19 @@ type userConfigYamlCandidates struct {
 func currentUserConfigYamlCandidates() userConfigYamlCandidates {
 	homeDir, homeErr := os.UserHomeDir()
 	nativeConfigDir, nativeErr := os.UserConfigDir()
-	candidates := buildUserConfigYamlCandidates(homeDir, homeErr, nativeConfigDir, nativeErr)
-	if candidates.nativeErr != nil {
-		candidates.nativeErr = fmt.Errorf("%s: %w", nativeUserConfigEnvironmentSource(), candidates.nativeErr)
-	}
-	return candidates
+	return buildUserConfigYamlCandidates(homeDir, homeErr, nativeConfigDir, nativeErr)
 }
 
-// nativeUserConfigEnvironmentSource names the source selected by os.UserConfigDir.
-// This labels errors only; os.UserConfigDir still owns path resolution.
-func nativeUserConfigEnvironmentSource() string {
+// nativeUserConfigValidationSource names the source of a relative directory
+// returned without a resolver error. On Unix, os.UserConfigDir already rejects
+// relative XDG_CONFIG_HOME values itself; only HOME can reach our validation.
+func nativeUserConfigValidationSource() string {
 	switch runtime.GOOS {
 	case "windows":
 		return "APPDATA"
-	case "darwin", "ios":
-		return "HOME"
 	case "plan9":
 		return "home"
 	default:
-		if os.Getenv("XDG_CONFIG_HOME") != "" {
-			return "XDG_CONFIG_HOME"
-		}
 		return "HOME"
 	}
 }
@@ -60,7 +52,13 @@ func buildUserConfigYamlCandidates(homeDir string, homeErr error, nativeConfigDi
 		candidates.documented = filepath.Clean(filepath.Join(home, ".config", "bd", "config.yaml"))
 	}
 
-	if nativeDir, err := cleanAbsoluteUserDirectory("native user config directory", nativeConfigDir, nativeErr); err != nil {
+	nativeLabel := "native user config directory"
+	if nativeErr == nil {
+		nativeLabel += " (" + nativeUserConfigValidationSource() + ")"
+	}
+	// Resolver errors already identify their source; retain that diagnostic
+	// without inferring it from a later read of the process environment.
+	if nativeDir, err := cleanAbsoluteUserDirectory(nativeLabel, nativeConfigDir, nativeErr); err != nil {
 		candidates.nativeErr = err
 	} else {
 		candidates.native = filepath.Clean(filepath.Join(nativeDir, "bd", "config.yaml"))

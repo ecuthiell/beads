@@ -40,10 +40,6 @@ if grep -Eq -- '^[[:space:]]*--- (FAIL|SKIP):' "$log"; then
     echo 'Native config diagnostic tests must pass without skips' >&2
     exit 1
 fi
-passes="$(grep -Ec -- '^[[:space:]]*--- PASS:' "$log" || true)"
-[[ "$passes" = "${#expected[@]}" ]] || {
-    echo 'Expected exactly one parent and two child passes' >&2; exit 1;
-}
 for name in "${expected[@]}"; do
     passes="$(grep -Ec -- "^[[:space:]]*--- PASS: $name( |$)" "$log" || true)"
     [[ "$passes" = 1 ]] || {

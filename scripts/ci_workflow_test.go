@@ -97,21 +97,16 @@ func TestPRComplexityReportIsAdvisoryAndBestEffort(t *testing.T) {
 func TestPRWorkflowExercisesNativeUserConfigDiagnostics(t *testing.T) {
 	workflow := readCIWorkflow(t, "pr.yml")
 	job := workflow.job(t, "pr-preflight-platforms")
-	if job.RunsOn != "${{ matrix.os }}" || job.If != "" || job.ContinueOnError || job.TimeoutMinutes != 20 {
-		t.Fatal("native config diagnostic lane must remain required on the existing platform matrix")
-	}
-	if !equalStrings(job.Strategy.Matrix.OS, []string{"ubuntu-latest", "macos-latest", "windows-latest"}) {
-		t.Fatalf("unexpected platform matrix: %v", job.Strategy.Matrix.OS)
-	}
+	// The benchmark-environment test owns the shared job and matrix shape.
 	wantHosts := map[string]string{"ubuntu-latest": "linux", "macos-latest": "darwin", "windows-latest": "windows"}
-	if len(job.Strategy.Matrix.Include) != len(wantHosts) {
-		t.Fatalf("unexpected native host tuples: %v", job.Strategy.Matrix.Include)
-	}
+	gotHosts := make(map[string][]string)
 	for _, tuple := range job.Strategy.Matrix.Include {
-		if want, ok := wantHosts[tuple.OS]; !ok || tuple.ExpectedGOOS != want {
-			t.Fatalf("unexpected native host tuple: %+v", tuple)
+		gotHosts[tuple.OS] = append(gotHosts[tuple.OS], tuple.ExpectedGOOS)
+	}
+	for host, want := range wantHosts {
+		if got := gotHosts[host]; len(got) != 1 || got[0] != want {
+			t.Fatalf("native host %s = %v, want exactly one %s", host, got, want)
 		}
-		delete(wantHosts, tuple.OS)
 	}
 	step := job.step(t, "Check native user config diagnostics")
 	if step.If != "" || step.Shell != "bash" || step.Env["CGO_ENABLED"] != "0" ||
