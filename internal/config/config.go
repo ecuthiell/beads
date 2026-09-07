@@ -1006,7 +1006,9 @@ func ResolveExternalProjectPath(projectName string) string {
 //  3. git config user.name
 //  4. hostname
 //
-// This is used as the sender field in bd mail commands.
+// The Git lookup discards inherited routing overrides, including
+// GIT_CONFIG_GLOBAL. Set user.name in the default global config location
+// rather than selecting a different file through that environment override.
 func GetIdentity(flagValue string) string {
 	// 1. Command-line flag takes precedence
 	if flagValue != "" {

@@ -47,6 +47,39 @@ func TestScrubRoutingForOSUsesHostKeySemantics(t *testing.T) {
 	}
 }
 
+func TestRoutingUnicodeKeysFollowSubprocessIdentity(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		for _, tc := range []struct {
+			key           string
+			unix, windows bool
+		}{
+			{"GIT_DIR", true, true},
+			{"GIT_CONFIG_COUNT", true, true},
+			{"git_dir", false, true},
+			{"GİT_DİR", false, true},
+			{"GIT_WORK_TREE", false, true},
+			{"gİt_config_count", false, true},
+			{"GIT_ſHALLOW_FILE", false, false},
+			{"GıT_DIR", false, false},
+		} {
+			t.Run(goos+"/"+tc.key, func(t *testing.T) {
+				input := []string{tc.key + "=value", "KEEP=first", "KEEP=second", `=C:=C:\work`}
+				blocked := tc.unix
+				if goos == "windows" {
+					blocked = tc.windows
+				}
+				want := input
+				if blocked {
+					want = input[1:]
+				}
+				if got := ScrubRoutingForOS(input, goos); !reflect.DeepEqual(got, want) {
+					t.Fatalf("routing environment = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestClearRoutingPreservesNonRoutingGitControls(t *testing.T) {
 	type envEntry struct {
 		key   string

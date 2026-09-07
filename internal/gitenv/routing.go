@@ -7,6 +7,8 @@ import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/execenv"
 )
 
 var routingKeys = map[string]struct{}{
@@ -44,14 +46,15 @@ func EntryKey(entry string) string {
 // executable, template, or config authority. Environment names follow host
 // semantics: byte-exact on POSIX and case-insensitive on Windows.
 func IsRoutingKeyForOS(key, goos string) bool {
-	if goos == "windows" {
-		key = strings.ToUpper(key)
-	}
-	if strings.HasPrefix(key, "GIT_CONFIG") {
+	if execenv.KeyHasPrefixForOS(key, "GIT_CONFIG", goos) {
 		return true
 	}
-	_, blocked := routingKeys[key]
-	return blocked
+	for routingKey := range routingKeys {
+		if execenv.KeyEqualForOS(key, routingKey, goos) {
+			return true
+		}
+	}
+	return false
 }
 
 // ScrubRouting removes Git routing entries using the current host's
