@@ -303,9 +303,11 @@ linters:
           msg: "do not write a filter here: take one back from a builder in internal/workapi, or pass the whole request to issueops.Reader. internal/httpapi may never name these types; cmd/bd denies them by default and lists the files that legitimately build their own, with the reason for each, in .golangci.yml - see issueops/reader.go"
         - pattern: '^fmt\.Print(f|ln)?$'
           pkg: '^fmt$'
+          # Keep the prefix in sync with the list/graph text exclusion below.
           msg: "do not write list/graph output through process stdout: route format output through the command writer; mark an intentional non-format path locally"
         - pattern: '^os\.Stdout$'
           pkg: '^os$'
+          # Keep the prefix in sync with the list/graph text exclusion below.
           msg: "do not write list/graph output through process stdout: route format output through the command writer; mark an intentional non-format path locally"
     errcheck:
       exclude-functions:
@@ -354,6 +356,7 @@ linters:
       # exceptions; a new file or output site is denied by default. Scoping by
       # the diagnostic text keeps the filter and label rules unchanged.
       - path-except: '^cmd/bd/(list|graph).*\.go$'
+        # This prefix must match both fmt.Print and os.Stdout messages above.
         text: 'do not write list/graph output through process stdout'
         linters:
           - forbidigo
