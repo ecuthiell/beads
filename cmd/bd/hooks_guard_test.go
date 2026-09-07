@@ -8,7 +8,86 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 )
+
+func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
+	runGit := func(repo string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = gitenv.ScrubRouting(os.Environ())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	target, decoy := t.TempDir(), t.TempDir()
+	for _, repo := range []string{target, decoy} {
+		runGit(repo, "init", "--quiet")
+		runGit(repo, "config", "core.hooksPath", ".git/hooks")
+	}
+	hooksDir := filepath.Join(target, "hooks")
+	if err := os.Mkdir(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(hooksDir, "pre-commit")
+	owned := filepath.Join(hooksDir, "pre-push")
+	untracked := filepath.Join(hooksDir, "post-merge")
+	contents := map[string]string{
+		foreign:                            "#!/bin/sh\necho team hook\n",
+		owned:                              "#!/bin/sh\n" + generateHookSection("pre-push"),
+		untracked:                          "#!/bin/sh\necho untracked hook\n",
+		filepath.Join(decoy, "decoy-only"): "decoy\n",
+	}
+	for path, content := range contents {
+		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(target, "add", "--force", "--", "hooks/pre-commit", "hooks/pre-push")
+	runGit(decoy, "add", "--force", "--", "decoy-only")
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"repository", map[string]string{"GIT_DIR": filepath.Join(decoy, ".git")}},
+		{"index", map[string]string{"GIT_INDEX_FILE": filepath.Join(decoy, ".git", "index")}},
+		{"inline_config", map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": decoy}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			if !isGitTrackedFile(foreign) {
+				t.Error("inherited routing hid the tracked hook")
+			}
+			if err := guardHookWritePath(foreign, false); err == nil || !strings.Contains(err.Error(), "tracked by git") {
+				t.Errorf("expected tracked-file refusal, got %v", err)
+			}
+			if err := guardHookWritePath(foreign, true); err != nil {
+				t.Errorf("shared tracked hook refused: %v", err)
+			}
+			if !isGitTrackedFile(owned) {
+				t.Error("owned hook fixture must remain tracked")
+			}
+			if err := guardHookWritePath(owned, false); err != nil {
+				t.Errorf("bd-owned tracked hook refused: %v", err)
+			}
+			if isGitTrackedFile(untracked) {
+				t.Error("untracked hook reported as tracked")
+			}
+			if err := guardHookWritePath(untracked, false); err != nil {
+				t.Errorf("untracked hook refused: %v", err)
+			}
+			for path, want := range contents {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != want {
+					t.Errorf("guard changed %s: content=%q, err=%v", path, got, err)
+				}
+			}
+		})
+	}
+}
 
 // setupGuardTestRepo creates a git repo with one tracked script and chdirs
 // into it. Returns the repo dir.
