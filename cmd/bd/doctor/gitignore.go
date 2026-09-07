@@ -770,13 +770,12 @@ func CheckProjectGitignore(repoPath string) DoctorCheck {
 func EnsureProjectGitignore(repoPath string) error {
 	gitignorePath := filepath.Join(repoPath, ".gitignore")
 
-	var existingContent string
 	// #nosec G304 -- path is hardcoded
-	if content, err := os.ReadFile(gitignorePath); err == nil {
-		existingContent = string(content)
-	} else if !os.IsNotExist(err) {
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read .gitignore: %w", err)
 	}
+	existingContent := string(content)
 
 	var toAdd []string
 	for _, pattern := range ProjectGitignorePatterns {
@@ -789,7 +788,7 @@ func EnsureProjectGitignore(repoPath string) error {
 		return nil // All patterns already present
 	}
 
-	lineEnding := gitignore.AppendLineEnding([]byte(existingContent))
+	lineEnding := gitignore.AppendLineEnding(content)
 	newContent := existingContent
 	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
 		if strings.HasSuffix(newContent, "\r") {

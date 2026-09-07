@@ -1985,6 +1985,7 @@ func TestEnsureProjectGitignore_PreservesAppendLineEndings(t *testing.T) {
 		{"LF trailing CR", "local\nlast\r", "local\nlast\r\n" + lfBlock},
 		{"only trailing CR", "local\r", "local\r\n" + lfBlock},
 		{"mixed majority CRLF", "a\r\nb\r\nc\n", "a\r\nb\r\nc\n" + lfBlock},
+		// Re-emitting an existing header is pre-existing behavior, preserved here.
 		{"partial with header", partial, partial + remaining},
 		{"complete unterminated", complete, complete},
 		{"complete CRLF", complete + "\r\n", complete + "\r\n"},
