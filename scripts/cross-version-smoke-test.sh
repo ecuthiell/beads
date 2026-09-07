@@ -22,7 +22,7 @@ set -uo pipefail
 #   CANDIDATE_BIN=./bd ./scripts/cross-version-smoke-test.sh    # prebuilt candidate
 #
 # Environment:
-#   CANDIDATE_BIN    Path to prebuilt candidate binary (skip build)
+#   CANDIDATE_BIN    Executable prebuilt path; empty builds, invalid refuses
 #   BEADS_TEST_MODE  Set to 1 to suppress telemetry/prompts
 #
 # Exit codes:
@@ -42,6 +42,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical build flags (GOFLAGS=-tags=gms_pure_go, CGO_ENABLED=1).
 # shellcheck source=../.buildflags
 source "$PROJECT_ROOT/.buildflags"
+# shellcheck source=lib/smoke-candidate.sh
+source "$PROJECT_ROOT/scripts/lib/smoke-candidate.sh" || exit $?
 
 CACHE_DIR="${HOME}/.cache/beads-regression"
 mkdir -p "$CACHE_DIR"
@@ -112,18 +114,6 @@ download_all_binaries() {
     done
     echo -e "${GREEN}Downloaded ${downloaded}${NC}, skipped ${skipped}"
     echo ""
-}
-
-build_candidate() {
-    if [ -n "${CANDIDATE_BIN:-}" ] && [ -x "${CANDIDATE_BIN}" ]; then
-        echo "$(cd "$(dirname "$CANDIDATE_BIN")" && pwd)/$(basename "$CANDIDATE_BIN")"
-        return
-    fi
-
-    local candidate="$CACHE_DIR/bd-candidate-$$"
-    echo -e "${YELLOW}Building candidate binary...${NC}" >&2
-    (cd "$PROJECT_ROOT" && go build -o "$candidate" ./cmd/bd) >&2
-    echo "$candidate"
 }
 
 # ---------------------------------------------------------------------------
@@ -483,7 +473,7 @@ fi
 # Main
 # ---------------------------------------------------------------------------
 
-CAND_BIN=$(build_candidate)
+CAND_BIN=$(build_candidate) || exit $?
 echo "Candidate: $CAND_BIN"
 DOLT_STATUS="not installed"
 if command -v dolt >/dev/null 2>&1; then

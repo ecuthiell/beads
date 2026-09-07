@@ -98,8 +98,7 @@ for version in "${SELECTED_VERSIONS[@]}"; do
     esac
 done
 
-candidate="${CANDIDATE_BIN:-}"
-if [ -z "$candidate" ]; then candidate=$(build_candidate); fi
+candidate=$(build_candidate) || exit $?
 candidate=$(resolve_existing_path "$candidate") || die 'candidate binary cannot be resolved'
 [ -x "$candidate" ] || die "candidate binary is not executable: $candidate"
 
