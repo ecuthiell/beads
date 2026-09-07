@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/gitignore"
 )
 
 // GitignoreTemplate is the canonical .beads/.gitignore content
@@ -787,14 +789,19 @@ func EnsureProjectGitignore(repoPath string) error {
 		return nil // All patterns already present
 	}
 
+	lineEnding := gitignore.AppendLineEnding([]byte(existingContent))
 	newContent := existingContent
 	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
+		if strings.HasSuffix(newContent, "\r") {
+			newContent += "\n" // Complete the existing CR without doubling it.
+		} else {
+			newContent += lineEnding
+		}
 	}
 
-	newContent += "\n" + ProjectGitignoreHeader + "\n"
+	newContent += lineEnding + ProjectGitignoreHeader + lineEnding
 	for _, pattern := range toAdd {
-		newContent += pattern + "\n"
+		newContent += pattern + lineEnding
 	}
 
 	// #nosec G306 -- gitignore needs to be readable by git and collaborators
