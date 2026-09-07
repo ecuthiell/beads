@@ -119,7 +119,7 @@ bd admin compact [flags]
       --apply            Apply mode: accept agent-provided summary
       --auto             Auto mode: AI-powered compaction (legacy)
       --batch-size int   Issues per batch (default 10)
-      --dolt             Dolt mode: run Dolt garbage collection on .beads/dolt
+      --dolt             Dolt mode: run Dolt garbage collection on the active database
       --dry-run          Preview without compacting
       --force            Force compact (bypass checks, requires --id)
       --id string        Compact specific issue
