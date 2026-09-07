@@ -4,7 +4,7 @@ package gitignore
 import "bytes"
 
 // AppendLineEnding preserves an unambiguous CRLF convention, following the
-// worktree append policy in #5677. Empty, delimiter-free, LF and mixed files
+// append policy in #6343. Empty, delimiter-free, LF and mixed files
 // default to LF; callers must leave existing bytes unchanged.
 func AppendLineEnding(content []byte) string {
 	lineFeeds := bytes.Count(content, []byte{'\n'})
