@@ -44,12 +44,20 @@ func TestEnvironmentOperationsForBothHosts(t *testing.T) {
 		{name: "Windows", windows: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			previousHost := hostOS
+			hostOS = "linux"
+			if tc.windows {
+				hostOS = "windows"
+			}
+			t.Cleanup(func() { hostOS = previousHost })
+			// Exercise all four exported host wrappers, so hardwiring one to
+			// POSIX semantics is falsifiable even when this test runs on Linux.
 			env := []string{"MIXED=canonical-first", "mixed=lower-last", "KEEP=first", "KEEP=second", "MALFORMED", `=C:=C:\work`, "MIXEſ=near-collision"}
 			original := slices.Clone(env)
-			if got := keyEqualForWindows("MIXED", "mixed", tc.windows); got != tc.windows {
+			if got := KeyEqual("MIXED", "mixed"); got != tc.windows {
 				t.Errorf("mixed-case equality = %v", got)
 			}
-			if keyEqualForWindows("MIXEſ", "MIXES", tc.windows) {
+			if KeyEqual("MIXEſ", "MIXES") {
 				t.Error("equality merged the Unicode near-collision")
 			}
 			wantValue := "canonical-first"
@@ -59,16 +67,19 @@ func TestEnvironmentOperationsForBothHosts(t *testing.T) {
 			} else {
 				wantWithout = append([]string{"mixed=lower-last"}, wantWithout...)
 			}
-			if value, ok := lookupForWindows(env, "MIXED", tc.windows); !ok || value != wantValue {
+			if value, ok := Lookup(env, "MIXED"); !ok || value != wantValue {
 				t.Errorf("lookup = %q, %v, want %q, true", value, ok, wantValue)
 			}
-			if value, ok := lookupForWindows(env, "=C:", tc.windows); !ok || value != `C:\work` {
+			if value, ok := Lookup(env, "=C:"); !ok || value != `C:\work` {
 				t.Errorf("drive lookup = %q, %v", value, ok)
 			}
-			if got := containsKeyWithPrefixForWindows(env, tc.windows, "miX"); got != tc.windows {
+			if got := ContainsKeyWithPrefix(env, "miX"); got != tc.windows {
 				t.Errorf("mixed-case prefix = %v", got)
 			}
-			if got := withoutForWindows(env, tc.windows, "MIXED"); !slices.Equal(got, wantWithout) {
+			if got := KeyHasPrefixForOS("MIXED", "miX", hostOS); got != tc.windows {
+				t.Errorf("explicit key prefix = %v", got)
+			}
+			if got := Without(env, "MIXED"); !slices.Equal(got, wantWithout) {
 				t.Errorf("without = %q, want %q", got, wantWithout)
 			}
 			if !slices.Equal(env, original) {
