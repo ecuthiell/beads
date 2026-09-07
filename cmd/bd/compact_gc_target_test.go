@@ -35,13 +35,16 @@ func (s *compactGCStoreStub) ActiveDatabaseSize(ctx context.Context) (int64, err
 
 func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 	clearTelemetryEnv(t)
+	t.Setenv("BD_JSON_ENVELOPE", "0")
 	toolDir := buildCompactGCFixture(t)
 	for _, tc := range []struct {
 		name, mode, pathKind     string
 		shared, dry, unsupported bool
 		decorated                bool
+		plain, envelope          bool
 		calls                    int
 		wantErr                  bool
+		wantMessage              string
 	}{
 		{name: "owned active", calls: 1},
 		{name: "shared active despite stale project root", shared: true, calls: 1},
@@ -51,15 +54,18 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 		{name: "real failure is not retried", mode: "failure", calls: 1, wantErr: true},
 		{name: "dry run", dry: true},
 		{name: "unsupported with plausible local path", unsupported: true, wantErr: true},
+		{name: "unsupported text output", unsupported: true, plain: true, wantErr: true},
+		{name: "unsupported enveloped output", unsupported: true, envelope: true, wantErr: true},
 		{name: "unsupported dry run", unsupported: true, dry: true},
 		{name: "unsupported through decorators", decorated: true, unsupported: true, wantErr: true},
 		{name: "unsupported dry run through decorators", decorated: true, unsupported: true, dry: true},
 		{name: "size capability is insufficient", pathKind: "size-only", wantErr: true},
 		{name: "general locator is insufficient", pathKind: "locator-only", wantErr: true},
-		{name: "missing declared path", pathKind: "missing", wantErr: true},
-		{name: "missing declared path in dry run", pathKind: "missing", dry: true, wantErr: true},
-		{name: "file is not a database directory", pathKind: "file", wantErr: true},
-		{name: "empty declared path", pathKind: "empty", wantErr: true},
+		{name: "missing declared path", pathKind: "missing", wantErr: true, wantMessage: "active Dolt database directory is unavailable"},
+		{name: "missing declared path in dry run", pathKind: "missing", dry: true, wantErr: true, wantMessage: "active Dolt database directory is unavailable"},
+		{name: "file is not a database directory", pathKind: "file", wantErr: true, wantMessage: "is not a directory"},
+		{name: "empty declared path", pathKind: "empty", wantErr: true, wantMessage: "requires an absolute active database directory"},
+		{name: "relative declared path", pathKind: "relative", wantErr: true, wantMessage: "requires an absolute active database directory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			oldStore, oldDry, oldJSON := store, compactDryRun, jsonOutput
@@ -103,6 +109,8 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 				candidate.directory = filepath.Join(active, "keep")
 			case "empty":
 				candidate.directory = ""
+			case "relative":
+				candidate.directory = "relative-database"
 			}
 			if tc.decorated {
 				t.Setenv("BD_OTEL_STDOUT", "true")
@@ -111,11 +119,63 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 					t.Fatal("production decorator chain lost the active store")
 				}
 			}
-			compactDryRun, jsonOutput = tc.dry, true
+			compactDryRun, jsonOutput = tc.dry, !tc.plain
+			if tc.envelope {
+				t.Setenv("BD_JSON_ENVELOPE", "1")
+			}
 			var runErr error
-			output := captureStdout(t, func() error { runErr = runCompactDolt(t.Context()); return nil })
+			var output string
+			if tc.wantErr {
+				output = captureStderr(t, func() { runErr = runCompactDolt(t.Context()) })
+			} else {
+				output = captureStdout(t, func() error { runErr = runCompactDolt(t.Context()); return nil })
+			}
 			if (runErr != nil) != tc.wantErr {
 				t.Fatalf("runCompactDolt error = %v, wantErr %v", runErr, tc.wantErr)
+			}
+			if tc.wantErr {
+				if code, ok := exitCodeFromError(runErr); !ok || code != 1 {
+					t.Fatalf("refusal exit code = %d, recognized %v; error %v", code, ok, runErr)
+				}
+			}
+			if tc.wantErr && tc.mode != "failure" {
+				message, hint := output, output
+				if tc.plain {
+					if !strings.HasPrefix(output, "Error: ") || !strings.Contains(output, "\nHint: ") {
+						t.Fatalf("missing text error/hint: %q", output)
+					}
+				} else {
+					var result map[string]interface{}
+					if err := json.Unmarshal([]byte(output), &result); err != nil {
+						t.Fatalf("error stderr is not JSON: %v: %s", err, output)
+					}
+					if result["schema_version"] != float64(JSONSchemaVersion) {
+						t.Fatalf("missing error schema version: %v", result)
+					}
+					if tc.envelope {
+						var ok bool
+						result, ok = result["data"].(map[string]interface{})
+						if !ok {
+							t.Fatalf("missing error envelope data: %s", output)
+						}
+					}
+					message, _ = result["error"].(string)
+					hint, _ = result["hint"].(string)
+				}
+				wantMessage := tc.wantMessage
+				if wantMessage == "" {
+					wantMessage = "cannot select a local database for external Dolt garbage collection"
+				}
+				if !strings.Contains(message, wantMessage) || !strings.Contains(hint, "bd doctor") {
+					t.Fatalf("refusal lost its cause or actionable hint: %s", output)
+				}
+				if tc.unsupported {
+					for _, condition := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT", "auto-start", "external", "gateway", "proxied", "socket", "TLS", "server administrator"} {
+						if !strings.Contains(hint, condition) {
+							t.Errorf("unsupported hint omits %q: %s", condition, hint)
+						}
+					}
+				}
 			}
 			data, err := os.ReadFile(logPath)
 			if err != nil && !os.IsNotExist(err) {
@@ -175,7 +235,8 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 					t.Fatalf("JSON: %v: %s", err, output)
 				}
 				if tc.unsupported {
-					if result["available"] != false || result["dolt_path"] != nil {
+					_, hasDoltPath := result["dolt_path"]
+					if result["available"] != false || hasDoltPath {
 						t.Fatalf("unsupported target was guessed: %v", result)
 					}
 				} else if result["dolt_path"] != active || result["size_before"] != float64(42) {
