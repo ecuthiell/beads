@@ -330,6 +330,8 @@ endif
 # legacy aliases (including case variants and redirected install directories)
 # so cleanup cannot remove the executable or weaken a failed install. Keep
 # directories named bd; the Windows PATH above supplies MSYS find, not System32 find.
+# find -H follows only command-line paths: internal symlink aliases are removed,
+# while junctions reported as directories are preserved.
 install install-force: build
 	@mkdir -p "$(INSTALL_DIR)"
 ifeq ($(OS),Windows_NT)
