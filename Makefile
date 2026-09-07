@@ -51,6 +51,7 @@ endif
 all: build
 
 BUILD_DIR := .
+BD_BUILD_OUTPUT := $(BUILD_DIR)/bd$(if $(filter Windows_NT,$(OS)),.exe)
 GIT_BUILD := $(shell git rev-parse --short HEAD)
 ifeq ($(OS),Windows_NT)
 INSTALL_DIR := $(USERPROFILE)/.local/bin
@@ -95,21 +96,21 @@ build:
 ifeq ($(OS),Windows_NT)
 	@if [ -n "$$CC" ]; then \
 		echo "Using CC=$$CC"; \
-		go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd.exe" ./cmd/bd; \
+		go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd; \
 	elif command -v gcc >/dev/null 2>&1; then \
-		CC=gcc go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd.exe" ./cmd/bd; \
+		CC=gcc go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd; \
 	elif command -v clang >/dev/null 2>&1 && clang -dumpmachine 2>/dev/null | grep -qi 'windows.*gnu'; then \
-		CC=clang go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd.exe" ./cmd/bd; \
+		CC=clang go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd; \
 	else \
 		for bin in $(WINDOWS_CGO_BINS); do \
 			if [ -x "$$bin/gcc.exe" ]; then \
 				echo "Using Windows CGO gcc from $$bin"; \
-				PATH="$$bin:$$PATH" CC=gcc go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd.exe" ./cmd/bd; \
+				PATH="$$bin:$$PATH" CC=gcc go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd; \
 				exit $$?; \
 			fi; \
 			if [ -x "$$bin/clang.exe" ] && "$$bin/clang.exe" -dumpmachine 2>/dev/null | grep -qi 'windows.*gnu'; then \
 				echo "Using Windows CGO clang from $$bin"; \
-				PATH="$$bin:$$PATH" CC=clang go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd.exe" ./cmd/bd; \
+				PATH="$$bin:$$PATH" CC=clang go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd; \
 				exit $$?; \
 			fi; \
 		done; \
@@ -119,9 +120,9 @@ ifeq ($(OS),Windows_NT)
 		exit 1; \
 	fi
 else
-	go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BUILD_DIR)/bd" ./cmd/bd
+	go build -tags "$(BUILD_TAGS)" -ldflags="-X main.Build=$(GIT_BUILD)" -o "$(BD_BUILD_OUTPUT)" ./cmd/bd
 ifeq ($(shell uname),Darwin)
-	@codesign -s - -f "$(BUILD_DIR)/bd" 2>/dev/null || true
+	@codesign -s - -f "$(BD_BUILD_OUTPUT)" 2>/dev/null || true
 	@echo "Signed bd for macOS"
 endif
 endif
@@ -255,7 +256,7 @@ test-regression:
 # Override version: ./scripts/upgrade-smoke-test.sh v0.62.0
 test-upgrade: build
 	@echo "Running upgrade smoke tests..."
-	@CANDIDATE_BIN=./bd ./scripts/upgrade-smoke-test.sh
+	@CANDIDATE_BIN="$(BD_BUILD_OUTPUT)" ./scripts/upgrade-smoke-test.sh
 
 
 # Run cross-version smoke tests (last 30 tags → candidate).
@@ -264,14 +265,14 @@ test-upgrade: build
 # All from v0.30.0: ./scripts/cross-version-smoke-test.sh --from v0.30.0
 test-cross-version: build
 	@echo "Running cross-version smoke tests..."
-	@CANDIDATE_BIN=./bd ./scripts/cross-version-smoke-test.sh
+	@CANDIDATE_BIN="$(BD_BUILD_OUTPUT)" ./scripts/cross-version-smoke-test.sh
 
 # Run the authenticated historical upgrade corpus with strict fidelity checks.
 # All qualified versions: ./scripts/migration-test/run.sh
 # Single version: ./scripts/migration-test/run.sh --version v0.49.6
 test-migration: build
 	@echo "Running migration test harness..."
-	@CANDIDATE_BIN=./bd ./scripts/migration-test/run.sh
+	@CANDIDATE_BIN="$(BD_BUILD_OUTPUT)" ./scripts/migration-test/run.sh
 
 # Regenerate the golden-JSON contract corpus (cmd/bd/protocol/testdata/corpus/).
 # Run after any deliberate bd --json wire change; review the diff, then commit.
