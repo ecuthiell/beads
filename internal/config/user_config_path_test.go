@@ -73,6 +73,66 @@ func TestUserConfigYamlCandidatesOwnNativeDiagnostics(t *testing.T) {
 	})
 }
 
+func TestUserConfigYamlCandidatesShareDiagnosticGrammar(t *testing.T) {
+	nativeSource := "HOME"
+	if runtime.GOOS == "windows" {
+		nativeSource = "APPDATA"
+	} else if runtime.GOOS == "plan9" {
+		nativeSource = "home"
+	}
+	homeResolutionErr := errors.New("home lookup failed")
+	nativeResolutionErr := errors.New("config lookup failed")
+	for _, tc := range []struct {
+		name                 string
+		home, native         string
+		homeErr, nativeErr   error
+		wantHome, wantNative string
+	}{
+		{
+			name:       "relative paths",
+			home:       "relative \"home\"",
+			native:     "relative \"native\"",
+			wantHome:   "user home directory (HOME/USERPROFILE) \"relative \\\"home\\\"\" is not an absolute native path",
+			wantNative: "native user config directory (" + nativeSource + ") \"relative \\\"native\\\"\" is not an absolute native path",
+		},
+		{
+			name:       "resolver errors",
+			homeErr:    homeResolutionErr,
+			nativeErr:  nativeResolutionErr,
+			wantHome:   "user home directory (HOME/USERPROFILE): home lookup failed",
+			wantNative: "native user config directory: config lookup failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidates := buildUserConfigYamlCandidates(tc.home, tc.homeErr, tc.native, tc.nativeErr)
+			if candidates.homeErr == nil || candidates.nativeErr == nil {
+				t.Fatalf("unsafe roots lack sibling errors: %#v", candidates)
+			}
+			if got := candidates.homeErr.Error(); got != tc.wantHome {
+				t.Errorf("home diagnostic = %q, want %q", got, tc.wantHome)
+			}
+			if got := candidates.nativeErr.Error(); got != tc.wantNative {
+				t.Errorf("native diagnostic = %q, want %q", got, tc.wantNative)
+			}
+			path, err := selectUserConfigYamlPath(candidates)
+			if path != "" || err == nil {
+				t.Fatalf("unsafe roots produced path %q, error %v", path, err)
+			}
+			if got, want := err.Error(), "resolve user config.yaml: "+tc.wantHome+"\n"+tc.wantNative; got != want {
+				t.Errorf("joined diagnostic = %q, want %q", got, want)
+			}
+			for _, pair := range []struct{ got, original error }{
+				{candidates.homeErr, tc.homeErr},
+				{candidates.nativeErr, tc.nativeErr},
+			} {
+				if pair.original != nil && (!errors.Is(pair.got, pair.original) || !errors.Is(err, pair.original)) {
+					t.Errorf("resolver error %v lost its identity in builder or joined diagnostic", pair.original)
+				}
+			}
+		})
+	}
+}
+
 func TestSelectUserConfigYamlPathPrecedence(t *testing.T) {
 	t.Run("existing documented path wins", func(t *testing.T) {
 		home, native := userConfigTestRoots(t)
