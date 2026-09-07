@@ -334,10 +334,10 @@ install install-force: build
 	@mkdir -p "$(INSTALL_DIR)"
 ifeq ($(OS),Windows_NT)
 	@rm -f "$(INSTALL_DIR)/bd" "$(INSTALL_DIR)/bd.exe"
-	@cp "$(BUILD_DIR)/bd.exe" "$(INSTALL_DIR)/bd.exe"
+	@cp "$(BD_BUILD_OUTPUT)" "$(INSTALL_DIR)/bd.exe"
 	@echo "Installed bd.exe to $(INSTALL_DIR)/bd.exe"
 else
-	@cp "$(BUILD_DIR)/bd" "$(INSTALL_DIR)/.bd.install.tmp.$$$$" && mv -f "$(INSTALL_DIR)/.bd.install.tmp.$$$$" "$(INSTALL_DIR)/bd"
+	@cp "$(BD_BUILD_OUTPUT)" "$(INSTALL_DIR)/.bd.install.tmp.$$$$" && mv -f "$(INSTALL_DIR)/.bd.install.tmp.$$$$" "$(INSTALL_DIR)/bd"
 	@echo "Installed bd to $(INSTALL_DIR)/bd"
 	@ln -sfn bd "$(INSTALL_DIR)/.beads.install.tmp.$$$$" && mv -f "$(INSTALL_DIR)/.beads.install.tmp.$$$$" "$(INSTALL_DIR)/beads"
 	@echo "Created 'beads' alias -> bd"
