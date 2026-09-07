@@ -1707,7 +1707,11 @@ func warnJSONLWithoutDoltRemote(reason string) {
 
 // filterEnv returns a copy of env with entries matching the given key removed.
 func filterEnv(env []string, key string) []string {
-	return execenv.Without(env, key)
+	return filterEnvForOS(env, key, hookEnvGOOS)
+}
+
+func filterEnvForOS(env []string, key, goos string) []string {
+	return execenv.WithoutForOS(env, goos, key)
 }
 
 // runPostMergeHook runs chained hooks after merge, then runs the legacy

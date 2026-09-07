@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -927,13 +928,22 @@ func gitIndexLockPath(path string, env []string) (string, error) {
 //     when the parent ran `git -c core.worktree=… commit`): the whole
 //     GIT_CONFIG namespace, which includes _COUNT, _KEY_n, _VALUE_n,
 //     _GLOBAL, _SYSTEM, _NOSYSTEM, and the legacy GIT_CONFIG itself.
+//
+// Both hook filters share this host seam so their complete composition can be
+// exercised under either environment-key policy on every test host.
+var hookEnvGOOS = runtime.GOOS
+
 func scrubGitHookEnv(env []string) []string {
+	return scrubGitHookEnvForOS(env, hookEnvGOOS)
+}
+
+func scrubGitHookEnvForOS(env []string, goos string) []string {
 	// The GIT_CONFIG prefix (no trailing "=") is intentional: it matches
 	// GIT_CONFIG=, GIT_CONFIG_COUNT=, GIT_CONFIG_KEY_n=, GIT_CONFIG_VALUE_n=,
 	// GIT_CONFIG_PARAMETERS=, GIT_CONFIG_GLOBAL=, GIT_CONFIG_SYSTEM=, and
 	// GIT_CONFIG_NOSYSTEM= — the whole family — in one entry. No standard
 	// git env var starts with GIT_CONFIG that we want to preserve.
-	cleaned := execenv.Without(env,
+	cleaned := execenv.WithoutForOS(env, goos,
 		"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
 		"GIT_PREFIX", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
 		"GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
@@ -941,9 +951,10 @@ func scrubGitHookEnv(env []string) []string {
 	// Without owns a fresh slice, so this second filter cannot mutate env.
 	out := cleaned[:0]
 	for _, entry := range cleaned {
-		// The extra delimiter preserves prefix removal for valueless entries;
-		// only the key is inspected, so existing values do not affect matching.
-		if !execenv.ContainsKeyWithPrefix([]string{entry + "="}, "GIT_CONFIG") {
+		// Prefix policy also drops valueless GIT_CONFIG entries. Without
+		// intentionally preserves valueless exact keys such as GIT_DIR.
+		key, _, _ := strings.Cut(entry, "=")
+		if !execenv.KeyHasPrefixForOS(key, "GIT_CONFIG", goos) {
 			out = append(out, entry)
 		}
 	}
