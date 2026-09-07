@@ -3962,7 +3962,7 @@ This is irreversible — all commit history is lost. The resulting database
 has exactly one commit containing all current data.
 
 Use this when:
-  - Your active database has grown very large
+  - Your .beads/dolt directory has grown very large
   - You don't need commit-level history (time travel)
   - You want to start fresh with minimal storage
 
@@ -4675,7 +4675,7 @@ Dolt Garbage Collection:
   With auto-commit per mutation, Dolt commit history grows over time. Use
   --dolt to run Dolt garbage collection and reclaim disk space.
 
-  --dolt: Run Dolt GC on the active database to free disk space.
+  --dolt: Run Dolt GC on .beads/dolt directory to free disk space.
           This removes unreachable commits and compacts storage.
 
 Examples:
@@ -4710,7 +4710,7 @@ bd admin compact [flags]
       --apply            Apply mode: accept agent-provided summary
       --auto             Auto mode: AI-powered compaction (legacy)
       --batch-size int   Issues per batch (default 10)
-      --dolt             Dolt mode: run Dolt garbage collection on the active database
+      --dolt             Dolt mode: run Dolt garbage collection on .beads/dolt
       --dry-run          Preview without compacting
       --force            Force compact (bypass checks, requires --id)
       --id string        Compact specific issue
