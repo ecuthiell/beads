@@ -525,6 +525,8 @@ func (t runInitTailContext) isRoleGitRepo(ctx context.Context, fallback bool) bo
 	if t.workDir == "" {
 		return fallback
 	}
+	// Dropping discovery ceilings can select a containing parent repository,
+	// matching the role adapter's existing scrubbed reads and writes.
 	probe := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
 	probe.Dir, probe.Env = t.workDir, gitenv.ScrubRouting(os.Environ())
 	return probe.Run() == nil
