@@ -583,3 +583,71 @@ func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
 		t.Errorf("created exclude = %q, want %q: %v", got, want, err)
 	}
 }
+
+func TestCheckProjectExcludeStealthReadBoundaries(t *testing.T) {
+	for _, name := range []string{"directory", "missing", "patterns", "leak"} {
+		t.Run(name, func(t *testing.T) {
+			dir := newGitRepo(t)
+			t.Chdir(dir)
+			excludePath := filepath.Join(dir, ".git", "info", "exclude")
+			if err := os.Remove(excludePath); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			preservedPath := excludePath
+			excludeContent := "user-rule\r\n" + strings.Join(doctor.ProjectGitignorePatterns, "\r\n") + "\r\n"
+			if name == "directory" {
+				if err := os.Mkdir(excludePath, 0755); err != nil {
+					t.Fatal(err)
+				}
+				preservedPath = filepath.Join(excludePath, "owned")
+			}
+			if name != "missing" {
+				if err := os.WriteFile(preservedPath, []byte(excludeContent), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gitignorePath := filepath.Join(dir, ".gitignore")
+			gitignoreContent := "user-content\r\n"
+			if name == "leak" || name == "directory" {
+				gitignoreContent = leakedGitignore(gitignoreContent)
+			}
+			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0600); err != nil {
+				t.Fatal(err)
+			}
+			want := doctor.DoctorCheck{Name: "Project Gitignore", Status: doctor.StatusWarning}
+			switch name {
+			case "directory":
+				_, readErr := os.ReadFile(excludePath)
+				if readErr == nil || os.IsNotExist(readErr) {
+					t.Fatalf("non-ENOENT read-error precondition: %v", readErr)
+				}
+				want.Message = "Unable to read .git/info/exclude"
+				want.Detail = readErr.Error()
+			case "missing":
+				want.Message = "Stealth mode: .git/info/exclude missing Dolt exclusion patterns"
+				want.Detail = "Missing from .git/info/exclude: " + strings.Join(doctor.ProjectGitignorePatterns, ", ")
+				want.Fix = "Run: bd doctor --fix"
+			case "patterns":
+				want.Status = doctor.StatusOK
+				want.Message = "Dolt and credential files excluded via .git/info/exclude (stealth)"
+			case "leak":
+				want.Message = "Stealth mode: Dolt patterns are exposed in the tracked .gitignore"
+				want.Detail = "Tracked .gitignore contains the beads section; bd doctor --fix will move it into .git/info/exclude"
+				want.Fix = "Run: bd doctor --fix"
+			}
+			if got := checkProjectExcludeStealth(dir); got != want {
+				t.Errorf("check = %+v, want %+v", got, want)
+			}
+			if got, err := os.ReadFile(gitignorePath); err != nil || string(got) != gitignoreContent {
+				t.Errorf("tracked gitignore changed to %q: %v", got, err)
+			}
+			if name == "missing" {
+				if _, err := os.Stat(excludePath); !os.IsNotExist(err) {
+					t.Errorf("diagnostic created missing exclude: %v", err)
+				}
+			} else if got, err := os.ReadFile(preservedPath); err != nil || string(got) != excludeContent {
+				t.Errorf("exclude bytes changed to %q: %v", got, err)
+			}
+		})
+	}
+}
