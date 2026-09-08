@@ -460,3 +460,51 @@ func TestContributorPlanningGitIgnoresInheritedRouting(t *testing.T) {
 		})
 	}
 }
+
+func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		want, inherited bool
+	}{
+		{"ordinary", true, true},
+		{"invalid_routing", true, false},
+		{"bare", true, true},
+		{"nested", true, true},
+		{"ceiling", true, false},
+		{"nonrepo_decoy", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, decoy, home := newInitRoleFixture(t)
+			switch tc.name {
+			case "invalid_routing":
+				t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "missing.git"))
+			case "bare":
+				bare := t.TempDir()
+				initRoleFixtureGit(t, bare, "init", "--bare", "--quiet")
+				t.Chdir(bare)
+			case "nested", "ceiling":
+				nested := filepath.Join(target, "nested")
+				if err := os.Mkdir(nested, 0750); err != nil {
+					t.Fatal(err)
+				}
+				t.Chdir(nested)
+				if tc.name == "ceiling" {
+					t.Setenv("GIT_CEILING_DIRECTORIES", target)
+				}
+			case "nonrepo_decoy":
+				t.Chdir(t.TempDir())
+				if isGitRepo() {
+					t.Fatal("fixture must start outside a repository")
+				}
+				t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			}
+			preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(home, ".gitconfig"))
+			if got := isGitRepo(); got != tc.inherited {
+				t.Fatalf("inherited repository precondition = %v, want %v", got, tc.inherited)
+			}
+			if got := isInitRoleGitRepo(); got != tc.want {
+				t.Errorf("role repository probe = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
