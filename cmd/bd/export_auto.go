@@ -911,6 +911,10 @@ func gitIndexLockPath(path string, env []string) (string, error) {
 	return filepath.Join(gitDir, "index.lock"), nil
 }
 
+// hookEnvGOOS lets both hook filters exercise either key policy on every test host.
+// Process-wide seam: tests that swap it must not run in parallel.
+var hookEnvGOOS = runtime.GOOS
+
 // scrubGitHookEnv returns env with the GIT_* variables that can poison
 // git's repo/worktree auto-discovery or object-store resolution removed,
 // so git falls back to auto-discovery from cwd. The scrub is
@@ -928,11 +932,6 @@ func gitIndexLockPath(path string, env []string) (string, error) {
 //     when the parent ran `git -c core.worktree=… commit`): the whole
 //     GIT_CONFIG namespace, which includes _COUNT, _KEY_n, _VALUE_n,
 //     _GLOBAL, _SYSTEM, _NOSYSTEM, and the legacy GIT_CONFIG itself.
-//
-// Both hook filters share this host seam so their complete composition can be
-// exercised under either environment-key policy on every test host.
-var hookEnvGOOS = runtime.GOOS
-
 func scrubGitHookEnv(env []string) []string {
 	return scrubGitHookEnvForOS(env, hookEnvGOOS)
 }
@@ -953,7 +952,7 @@ func scrubGitHookEnvForOS(env []string, goos string) []string {
 	for _, entry := range cleaned {
 		// Prefix policy also drops valueless GIT_CONFIG entries. Without
 		// intentionally preserves valueless exact keys such as GIT_DIR.
-		key, _, _ := strings.Cut(entry, "=")
+		key := execenv.EntryKey(entry)
 		if !execenv.KeyHasPrefixForOS(key, "GIT_CONFIG", goos) {
 			out = append(out, entry)
 		}
