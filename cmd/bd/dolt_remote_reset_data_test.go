@@ -3,9 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/dolthub/dolt/go/store/blobstore"
+	"github.com/steveyegge/beads/internal/execenv"
 	"github.com/steveyegge/beads/internal/githooksenv"
 )
 
@@ -25,11 +27,19 @@ func TestResetDataRefNamesMatchDolt(t *testing.T) {
 func TestEnvWithNoGitHooksPreservesExistingParameters(t *testing.T) {
 	const existing = "'user.email=ci@example.com'"
 	t.Setenv(githooksenv.ParametersEnv, existing)
+	t.Setenv("BEADS_TEST_NO_HOOKS_KEEP", "GIT_CONFIG_PARAMETERS=unrelated-value")
 
-	got := githooksenv.Extract(envWithNoGitHooks())
-	want := existing + " " + githooksenv.NoHooksParam
-	if got != want {
-		t.Fatalf("envWithNoGitHooks %s = %q, want %q", githooksenv.ParametersEnv, got, want)
+	// Build the expected slice independently of Without/DisabledEnv so a
+	// stale entry cannot hide behind Extract's last-wins lookup.
+	var want []string
+	for _, entry := range os.Environ() {
+		if !execenv.KeyEqual(execenv.EntryKey(entry), githooksenv.ParametersEnv) {
+			want = append(want, entry)
+		}
+	}
+	want = append(want, githooksenv.ParametersEnv+"="+existing+" "+githooksenv.NoHooksParam)
+	if got := envWithNoGitHooks(); !slices.Equal(got, want) {
+		t.Fatalf("envWithNoGitHooks() differs from the expected environment: got %d entries, want %d", len(got), len(want))
 	}
 }
 
