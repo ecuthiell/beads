@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -213,5 +214,98 @@ func TestAutoConfigureForkContributorIgnoresInheritedGitRouting(t *testing.T) {
 				t.Errorf("precreated planning directory changed: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func TestCheckPushAccessIgnoresInheritedGitRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name, url string
+		wantPush  bool
+	}{
+		{"ssh", "git@example.invalid:target/repo.git", true},
+		{"https", "https://example.invalid/target/repo.git", false},
+		{"file", "file:///target/repo.git", true},
+		{"missing", "", false},
+	} {
+		for _, poison := range []string{"repository", "inline_config"} {
+			t.Run(tc.name+"/"+poison, func(t *testing.T) {
+				target, decoy, home := newInitRoleFixture(t)
+				const injected = "git@example.invalid:decoy/repo.git"
+				if tc.url != "" {
+					initRoleFixtureGit(t, target, "remote", "add", "origin", tc.url)
+				}
+				initRoleFixtureGit(t, decoy, "remote", "add", "origin", injected)
+				if poison == "repository" {
+					t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+					t.Setenv("GIT_WORK_TREE", decoy)
+				} else {
+					key, value := "remote.origin.url", injected
+					if tc.url != "" {
+						key, value = "url."+injected+".insteadOf", tc.url
+					}
+					t.Setenv("GIT_CONFIG_COUNT", "1")
+					t.Setenv("GIT_CONFIG_KEY_0", key)
+					t.Setenv("GIT_CONFIG_VALUE_0", value)
+				}
+				preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(home, ".gitconfig"))
+				if push, url := checkPushAccess(); push != tc.wantPush || url != tc.url {
+					t.Errorf("checkPushAccess = %v, %q; want %v, %q", push, url, tc.wantPush, tc.url)
+				}
+			})
+		}
+	}
+}
+
+// Stop the actual wizard at its first persistence call, before changing config.
+type initOriginStopStore struct{ storage.DoltStorage }
+
+func (*initOriginStopStore) SetConfig(context.Context, string, string) error {
+	return context.Canceled
+}
+
+func TestContributorWizardUsesTargetOrigin(t *testing.T) {
+	target, decoy, home := newInitRoleFixture(t)
+	const origin = "https://example.invalid/target/repo.git"
+	initRoleFixtureGit(t, target, "remote", "add", "origin", origin)
+	initRoleFixtureGit(t, target, "remote", "add", "upstream", "https://example.invalid/upstream/repo.git")
+	initRoleFixtureGit(t, decoy, "remote", "add", "origin", "git@example.invalid:decoy/repo.git")
+	planning := filepath.Join(target, "n")
+	if err := os.Mkdir(planning, 0750); err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(home, "stdin")
+	if err := os.WriteFile(inputPath, []byte("n\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.Open(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	t.Setenv("BEADS_DIR", "")
+	t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	t.Setenv("GIT_WORK_TREE", decoy)
+	preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(home, ".gitconfig"))
+	var wizardErr error
+	out := captureStdout(t, func() error {
+		oldStdin := os.Stdin
+		os.Stdin = input
+		defer func() { os.Stdin = oldStdin }()
+		wizardErr = runContributorWizard(t.Context(), &initOriginStopStore{})
+		return nil
+	})
+	if !errors.Is(wizardErr, context.Canceled) || !strings.Contains(wizardErr.Error(), "failed to set routing mode") {
+		t.Errorf("wizard did not reach the owned persistence stop: %v", wizardErr)
+	}
+	for _, want := range []string{"Read-only access to origin (" + origin + ")", "Planning repo path [press Enter for default]:", "Using existing planning repository"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("wizard output lacks %q: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "separate planning repo anyway?") || strings.Contains(out, "Setup canceled") {
+		t.Errorf("wizard followed decoy push-access branch: %s", out)
+	}
+	if entries, err := os.ReadDir(planning); err != nil || len(entries) != 0 {
+		t.Errorf("precreated planning directory changed: %v, %v", entries, err)
 	}
 }

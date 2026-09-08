@@ -383,6 +383,7 @@ func detectForkSetup() (isFork bool, upstreamURL string) {
 func checkPushAccess() (hasPush bool, originURL string) {
 	// Get origin URL
 	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return false, ""
