@@ -15,6 +15,14 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+// planningGitCommand keeps writes in the chosen planning repository.
+func planningGitCommand(planningPath string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = planningPath
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	return cmd
+}
+
 // runContributorWizard guides the user through OSS contributor setup
 func runContributorWizard(ctx context.Context, store storage.DoltStorage) error {
 	fmt.Printf("\n%s %s\n\n", ui.RenderBold("bd"), ui.RenderBold("Contributor Workflow Setup Wizard"))
@@ -154,8 +162,7 @@ func runContributorWizard(ctx context.Context, store storage.DoltStorage) error 
 		}
 
 		// Initialize git repo in planning directory
-		cmd := exec.Command("git", "init")
-		cmd.Dir = planningPath
+		cmd := planningGitCommand(planningPath, "init")
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to initialize git in planning repo: %w", err)
 		}
@@ -190,12 +197,10 @@ Created by: bd init --contributor
 		}
 
 		// Initial commit in planning repo
-		cmd = exec.Command("git", "add", ".")
-		cmd.Dir = planningPath
+		cmd = planningGitCommand(planningPath, "add", ".")
 		_ = cmd.Run()
 
-		cmd = exec.Command("git", "commit", "-m", "Initial commit: beads planning repository")
-		cmd.Dir = planningPath
+		cmd = planningGitCommand(planningPath, "commit", "-m", "Initial commit: beads planning repository")
 		_ = cmd.Run()
 
 		fmt.Printf("%s Planning repository created\n", ui.RenderPass("✓"))
@@ -315,8 +320,7 @@ func autoConfigureForkContributor(ctx context.Context, store storage.DoltStorage
 		if err := os.MkdirAll(planningPath, 0750); err != nil {
 			return fmt.Errorf("failed to create planning repo: %w", err)
 		}
-		gitInit := exec.Command("git", "init")
-		gitInit.Dir = planningPath
+		gitInit := planningGitCommand(planningPath, "init")
 		if err := gitInit.Run(); err != nil {
 			return fmt.Errorf("failed to init git in planning repo: %w", err)
 		}
