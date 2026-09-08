@@ -2451,3 +2451,64 @@ func TestGitPathForRepo(t *testing.T) {
 		}
 	})
 }
+
+func TestSelectedBeadsCanonicalizerIgnoresInheritedRouting(t *testing.T) {
+	t.Chdir(t.TempDir())
+	detached, stable, database := setupDetachedCommitBeadsWorktree(t)
+	_, decoy, _ := setupDetachedCommitBeadsWorktree(t)
+	decoyGitDir := runGitInDir(t, filepath.Dir(decoy), "rev-parse", "--absolute-git-dir")
+	redirect := filepath.Join(t.TempDir(), ".beads")
+	if err := os.Mkdir(redirect, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirect, RedirectFileName), []byte(detached), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, gitDir string }{
+		{"decoy", decoyGitDir},
+		{"invalid", filepath.Join(t.TempDir(), "missing git dir")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GIT_DIR", tc.gitDir)
+			t.Setenv("BEADS_DIR", detached)
+			t.Setenv("BEADS_DB", "")
+			// Generic discovery still honors inherited routing.
+			branch, err := gitOutput(filepath.Dir(detached), "rev-parse", "--abbrev-ref", "HEAD")
+			if (tc.name == "decoy" && (err != nil || branch != "main")) || (tc.name == "invalid" && err == nil) {
+				t.Fatalf("generic inherited query = %q, %v", branch, err)
+			}
+			for _, check := range []struct{ name, got, want string }{
+				{"FollowRedirect", FollowRedirect(redirect), stable},
+				{"FindBeadsDir", FindBeadsDir(), stable},
+				{"FindDatabasePath", FindDatabasePath(), database},
+			} {
+				if !utils.PathsEqual(check.got, check.want) {
+					t.Errorf("%s = %q, want selected stable path %q", check.name, check.got, check.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSelectedBeadsCanonicalizerFallbacks(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, name := range []string{"ordinary", "different_head", "missing_stable"} {
+		t.Run(name, func(t *testing.T) {
+			detached, stable, _ := setupDetachedCommitBeadsWorktree(t)
+			want := detached
+			switch name {
+			case "ordinary":
+				want = stable
+			case "different_head":
+				runGitInDir(t, filepath.Dir(stable), "commit", "--allow-empty", "-m", "Different branch head")
+			case "missing_stable":
+				if err := os.Rename(stable, stable+".saved"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := canonicalizeBeadsDirPath(want); !utils.PathsEqual(got, want) {
+				t.Errorf("canonical path = %q, want unchanged %q", got, want)
+			}
+		})
+	}
+}

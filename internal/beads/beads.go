@@ -21,6 +21,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/internal/utils"
@@ -228,12 +229,12 @@ func preferStableBranchWorktreeBeadsDir(beadsDir string) string {
 		return ""
 	}
 
-	branch, err := gitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := selectedBeadsGitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil || branch != "HEAD" {
 		return ""
 	}
 
-	head, err := gitOutput(repoRoot, "rev-parse", "HEAD")
+	head, err := selectedBeadsGitOutput(repoRoot, "rev-parse", "HEAD")
 	if err != nil || head == "" {
 		return ""
 	}
@@ -292,8 +293,21 @@ func gitOutput(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// selectedBeadsGitOutput probes the repository of an already selected .beads path.
+func selectedBeadsGitOutput(dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // args are internal, not user-supplied
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 func listWorktrees(repoRoot string) ([]worktreeInfo, error) {
-	output, err := gitOutput(repoRoot, "worktree", "list", "--porcelain")
+	output, err := selectedBeadsGitOutput(repoRoot, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
