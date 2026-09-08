@@ -33,12 +33,20 @@ var routingKeys = map[string]struct{}{
 	"GIT_WORK_TREE":                    {},
 }
 
-// EntryKey returns the key portion of an environment entry.
-func EntryKey(entry string) string {
-	if separator := strings.IndexByte(entry, '='); separator >= 0 {
-		return entry[:separator]
+// Derive Windows membership once from the canonical routing-key set.
+var windowsRoutingKeys = func() map[string]struct{} {
+	keys := make(map[string]struct{}, len(routingKeys))
+	for key := range routingKeys {
+		keys[execenv.KeyIdentityForOS(key, "windows")] = struct{}{}
 	}
-	return entry
+	return keys
+}()
+
+var windowsConfigPrefix = execenv.KeyIdentityForOS("GIT_CONFIG", "windows")
+
+// EntryKey returns the key portion using the shared subprocess split rule.
+func EntryKey(entry string) string {
+	return execenv.EntryKey(entry)
 }
 
 // IsRoutingKeyForOS reports whether key can redirect Git away from an explicit
@@ -46,15 +54,18 @@ func EntryKey(entry string) string {
 // executable, template, or config authority. Environment names follow host
 // semantics: byte-exact on POSIX and case-insensitive on Windows.
 func IsRoutingKeyForOS(key, goos string) bool {
-	if execenv.KeyHasPrefixForOS(key, "GIT_CONFIG", goos) {
+	keys := routingKeys
+	prefix := "GIT_CONFIG"
+	if goos == "windows" {
+		keys = windowsRoutingKeys
+		prefix = windowsConfigPrefix
+	}
+	key = execenv.KeyIdentityForOS(key, goos)
+	if strings.HasPrefix(key, prefix) {
 		return true
 	}
-	for routingKey := range routingKeys {
-		if execenv.KeyEqualForOS(key, routingKey, goos) {
-			return true
-		}
-	}
-	return false
+	_, routing := keys[key]
+	return routing
 }
 
 // ScrubRouting removes Git routing entries using the current host's
