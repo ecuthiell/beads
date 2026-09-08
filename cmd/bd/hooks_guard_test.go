@@ -384,6 +384,14 @@ func TestGuardHookWritePathHonorsInheritedRepository(t *testing.T) {
 			runGit("config", "core.hooksPath", ".githooks")
 			runGit("add", "--force", "--", ".githooks/pre-commit")
 			if name == "global_safe_directory" {
+				// Reproduce a lower-priority ambient allowance even on an isolated host.
+				ambient := filepath.Join(home, ".config", "git")
+				if err := os.MkdirAll(ambient, 0755); err != nil {
+					t.Fatal(err)
+				}
+				runGit("config", "--file", filepath.Join(ambient, "config"), "safe.directory", "*")
+				// This default-global reset survives ScrubRouting removing GIT_CONFIG_*.
+				runGit("config", "--file", filepath.Join(home, ".gitconfig"), "safe.directory", "")
 				runGit("config", "--global", "--add", "safe.directory", filepath.ToSlash(repo))
 				// Exercise Git's ownership-check control flow, not OS ownership/ACLs.
 				t.Setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
