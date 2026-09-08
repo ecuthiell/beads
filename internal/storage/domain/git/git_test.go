@@ -326,3 +326,72 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 		})
 	}
 }
+
+func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home := t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "fixture git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	for _, kind := range []string{"ordinary", "nested", "linked", "bare", "nonrepo"} {
+		t.Run(kind, func(t *testing.T) {
+			target, decoy := t.TempDir(), t.TempDir()
+			runGit(decoy, "init", "--quiet")
+			runGit(decoy, "config", "test.marker", "decoy")
+			if kind == "bare" {
+				runGit(target, "init", "--bare", "--quiet")
+			} else if kind != "nonrepo" {
+				runGit(target, "init", "--quiet")
+			}
+			if kind != "nonrepo" {
+				runGit(target, "config", "test.marker", "target")
+			}
+			if kind == "nested" {
+				target = filepath.Join(target, "nested")
+				require.NoError(t, os.Mkdir(target, 0755))
+			} else if kind == "linked" {
+				runGit(target, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgSign=false", "-c", "core.hooksPath=", "commit", "--allow-empty", "-m", "seed")
+				linked := filepath.Join(t.TempDir(), "linked")
+				runGit(target, "-c", "core.hooksPath=", "worktree", "add", "--detach", linked)
+				target = linked
+			}
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			t.Chdir(decoy)
+			inherited := NewGitRepository(target)
+			marker, found, err := inherited.GetConfig(t.Context(), "test.marker")
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, "decoy", marker, "generic constructor must retain inherited routing")
+			env := os.Environ()
+			selected := NewInitGitRepository(target)
+			isRepo, err := selected.IsGitRepo(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, kind != "nonrepo", isRepo)
+			bare, err := selected.IsBareGitRepo(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, kind == "bare", bare)
+			marker, found, err = selected.GetConfig(t.Context(), "test.marker")
+			require.NoError(t, err)
+			require.Equal(t, kind != "nonrepo", found)
+			if found {
+				require.Equal(t, "target", marker)
+			}
+			require.True(t, slices.Equal(env, os.Environ()))
+		})
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	domaingit "github.com/steveyegge/beads/internal/storage/domain/git"
 	"github.com/steveyegge/beads/internal/storage/fs"
 	"github.com/steveyegge/beads/internal/storage/git"
 	"github.com/steveyegge/beads/internal/storage/uow"
@@ -533,7 +534,12 @@ func (t runInitTailContext) isRoleGitRepo(ctx context.Context, fallback bool) bo
 }
 
 func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initProxiedServerInput, t runInitTailContext) error {
-	isRepo := t.gitUC.IsGitRepo(ctx)
+	gitUC := t.gitUC
+	if t.workDir != "" {
+		// Only the selected tail uses this scope; earlier bootstrap keeps its provider.
+		gitUC = domain.NewGitUseCase(t.workDir, domaingit.NewInitGitRepository(t.workDir))
+	}
+	isRepo := gitUC.IsGitRepo(ctx)
 
 	if t.isRoleGitRepo(ctx, isRepo) {
 		role := in.roleFlag
@@ -554,7 +560,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 			fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 		}
 	} else if !in.stealth && isRepo {
-		if isFork, upstreamURL, _ := t.gitUC.DetectFork(ctx); isFork {
+		if isFork, upstreamURL, _ := gitUC.DetectFork(ctx); isFork {
 			if in.nonInteractive {
 				if err := t.fsUseCase.SetupForkExclude(ctx, !in.quiet); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
@@ -578,8 +584,8 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		if hooksInstalled() && !in.quiet {
 			fmt.Printf("  Updating hooks to version %s...\n", Version)
 		}
-		isJJ := t.gitUC.IsJujutsuRepo(ctx)
-		isColocated := t.gitUC.IsColocatedJJGit(ctx)
+		isJJ := gitUC.IsJujutsuRepo(ctx)
+		isColocated := gitUC.IsColocatedJJGit(ctx)
 		switch {
 		case isJJ && !isColocated:
 			if !in.quiet {
@@ -622,7 +628,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		if resolvedAgentsFile == "" {
 			resolvedAgentsFile = config.SafeAgentsFile()
 		}
-		isBare := t.gitUC.IsBareGitRepo(ctx)
+		isBare := gitUC.IsBareGitRepo(ctx)
 		if isBare {
 			if !in.quiet {
 				fmt.Printf("  Skipping %s generation in bare repository\n", resolvedAgentsFile)
@@ -643,7 +649,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 	}
 
 	if !in.stealth && isRepo && t.useLocalBeads {
-		commitResult, err := t.gitUC.CommitInitArtifacts(ctx, domain.CommitInitArtifactsParams{
+		commitResult, err := gitUC.CommitInitArtifacts(ctx, domain.CommitInitArtifactsParams{
 			BeadsDir: ".beads/",
 			OptionalPaths: []string{
 				config.SafeAgentsFile(),
@@ -664,7 +670,7 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 	}
 
 	if isRepo && !in.quiet {
-		if t.gitUC.HasAnyRemotes(ctx) && !t.gitUC.HasUpstream(ctx) {
+		if gitUC.HasAnyRemotes(ctx) && !gitUC.HasUpstream(ctx) {
 			fmt.Fprintf(os.Stderr, "\n%s Git upstream not configured\n", ui.RenderWarn("⚠"))
 			fmt.Fprintf(os.Stderr, "  For sync workflows, set your upstream with:\n")
 			fmt.Fprintf(os.Stderr, "  %s\n\n", ui.RenderAccent("git remote add upstream <repo-url>"))
