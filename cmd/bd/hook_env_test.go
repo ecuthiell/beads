@@ -9,6 +9,7 @@ func TestFilterChainedHookEnvUsesHostKeyIdentity(t *testing.T) {
 	checkHookEnvForBothHosts(t, checkChainedHookEnv)
 }
 
+// Callers and subtests must remain serial while they swap the process-wide seam.
 func checkHookEnvForBothHosts(t *testing.T, check func(*testing.T)) {
 	t.Helper()
 	for _, goos := range []string{"linux", "windows"} {
