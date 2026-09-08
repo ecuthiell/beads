@@ -343,7 +343,9 @@ func autoConfigureForkContributor(ctx context.Context, store storage.DoltStorage
 		return fmt.Errorf("failed to set sync.remote: %w", err)
 	}
 
-	_ = setBeadsRole("contributor")
+	if err := setBeadsRole("contributor"); err != nil && !quiet {
+		fmt.Fprintf(os.Stderr, "Warning: failed to set beads.role=contributor: %v\n", err)
+	}
 
 	if configPath, err := config.FindConfigYAMLPath(); err == nil {
 		if addErr := config.AddRepo(configPath, planningPath); addErr != nil && !strings.Contains(addErr.Error(), "already exists") {
