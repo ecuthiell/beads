@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/embeddeddolt"
 	"github.com/steveyegge/beads/internal/storage/schema"
 	"github.com/steveyegge/beads/internal/types"
@@ -1486,5 +1487,48 @@ func TestEmbeddedInitRoleRouting(t *testing.T) {
 				t.Errorf("embedded init target role = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestEmbeddedInitArtifactRouting(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	bd := buildEmbeddedBD(t)
+	target, decoy, home := newInitRoleFixture(t)
+	global := filepath.Join(home, ".gitconfig")
+	initRoleFixtureGit(t, target, "config", "--file", global, "user.name", "Artifact Fixture")
+	initRoleFixtureGit(t, target, "config", "--file", global, "user.email", "artifact@example.invalid")
+	t.Setenv("GIT_DIR", filepath.Join(home, "missing.git"))
+	preserveInitRoleInputs(t, filepath.Join(decoy, ".git", "config"), global)
+	beadsDir := filepath.Join(target, ".beads")
+	cmd := exec.Command(bd, "init", "--prefix", "artifactfixture", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents", "--role", "contributor")
+	cmd.Dir = target
+	env := bdEnv(home)
+	for _, key := range []string{"BD_DB", "BD_DOLT_HOST", "BD_DOLT_PORT"} {
+		env = envWithout(env, key)
+	}
+	cmd.Env = append(env, "BEADS_DIR="+beadsDir, "DOLT_ROOT_PATH="+home, "BD_DOLT_MODE=embedded", "BD_EVENTS_JOURNAL=false")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("embedded artifact init failed: %v\n%s", err, out)
+	}
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil || cfg.GetBackend() != configfile.BackendDolt || cfg.DoltMode != configfile.DoltModeEmbedded {
+		t.Fatalf("artifact init must persist embedded metadata: %+v, %v", cfg, err)
+	}
+	if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt", "artifactfixture", ".dolt")); err != nil || !info.IsDir() {
+		t.Fatalf("embedded artifact database directory missing: %v", err)
+	}
+	if got := initRoleFixtureGit(t, target, "config", "--local", "--get", "beads.role"); got != "contributor" {
+		t.Errorf("embedded role/artifact composition lost explicit role: %q", got)
+	}
+	want, err := os.ReadFile(filepath.Join(beadsDir, "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	show := exec.Command("git", "show", "HEAD:.beads/metadata.json")
+	show.Dir, show.Env = target, gitenv.ScrubRouting(os.Environ())
+	if got, err := show.CombinedOutput(); err != nil || !bytes.Equal(got, want) {
+		t.Errorf("embedded init did not commit target metadata: %v: %s", err, got)
 	}
 }

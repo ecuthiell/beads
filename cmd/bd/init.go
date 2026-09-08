@@ -2118,61 +2118,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			}
 		}
 
-		// Auto-stage and commit beads files so bd doctor doesn't warn about
-		// untracked files or dirty working tree in a clean room setup.
-		// Only runs when not stealth, in a git repo, and using local storage.
-		if !stealth && isGitRepo() && useLocalBeads {
-			gitAddCmd := exec.Command("git", "add", ".beads/")
-			if _, addErr := gitAddCmd.CombinedOutput(); addErr == nil {
-				// Also stage the agents file if it exists
-				agentsFileToStage := config.SafeAgentsFile()
-				if _, statErr := os.Stat(agentsFileToStage); statErr == nil {
-					agentsCmd := exec.Command("git", "add", agentsFileToStage)
-					_ = agentsCmd.Run()
-				}
-				// Also stage Claude settings if created by init
-				claudeSettingsPath := filepath.Join(".claude", "settings.json")
-				if _, statErr := os.Stat(claudeSettingsPath); statErr == nil {
-					claudeCmd := exec.Command("git", "add", claudeSettingsPath)
-					_ = claudeCmd.Run()
-				}
-				// Also stage CLAUDE.md if created by setup
-				if _, statErr := os.Stat("CLAUDE.md"); statErr == nil {
-					claudeMdCmd := exec.Command("git", "add", "CLAUDE.md")
-					_ = claudeMdCmd.Run()
-				}
-				// Also stage Codex and Cursor project integration files if created
-				// by setup. Cursor project hooks/rules are meant to be committed
-				// (a no-op git add if .cursor/ is gitignored in this repo).
-				for _, path := range []string{".agents", ".codex", ".cursor"} {
-					if _, statErr := os.Stat(path); statErr == nil {
-						codexCmd := exec.Command("git", "add", path)
-						_ = codexCmd.Run()
-					}
-				}
-				// Also stage .gitignore if modified by EnsureProjectGitignore
-				if _, statErr := os.Stat(".gitignore"); statErr == nil {
-					giCmd := exec.Command("git", "add", ".gitignore")
-					_ = giCmd.Run()
-				}
-				// Hooks installed by this init can call back into bd. Skip all
-				// of them for the bootstrap commit to avoid self-deadlocking
-				// while init still owns the embedded Dolt lock. --no-verify
-				// alone does not skip prepare-commit-msg.
-				commitArgs := []string{"-c", "core.hooksPath=", "commit", "--no-verify", "-m", "bd init: initialize beads issue tracking"}
-				commitCmd := exec.Command("git", commitArgs...)
-				if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
-					if !quiet && !strings.Contains(string(commitOut), "nothing to commit") {
-						fmt.Fprintf(os.Stderr, "Warning: failed to commit beads files: %v\n", commitErr)
-					}
-				} else if !quiet {
-					fmt.Printf("  %s Committed beads files to git\n", ui.RenderPass("✓"))
-				}
-				// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
-				// directory — including noms/LOCK files. These are Dolt-internal files.
-				// Removing them WILL cause unrecoverable data corruption and data loss.
-				// Dolt manages these files itself; external interference is never safe.
-			}
+		if !stealth && useLocalBeads {
+			commitEmbeddedInitArtifacts(cwd, quiet)
 		}
 
 		// Check for missing git upstream and warn if not configured.
@@ -3447,4 +3394,69 @@ func resolveInitDoltMode(proxiedFlag, sharedFlag, serverFlag bool) string {
 		return "server"
 	}
 	return "embedded"
+}
+
+// commitEmbeddedInitArtifacts stages the local init artifacts and preserves the
+// optional-add and nonfatal commit behavior of the embedded bootstrap.
+func commitEmbeddedInitArtifacts(workDir string, quiet bool) {
+	if initArtifactGitCommand(workDir, "rev-parse", "--git-dir").Run() != nil {
+		return
+	}
+	gitAddCmd := initArtifactGitCommand(workDir, "add", ".beads/")
+	if _, addErr := gitAddCmd.CombinedOutput(); addErr == nil {
+		// Also stage the agents file if it exists
+		agentsFileToStage := config.SafeAgentsFile()
+		if _, statErr := os.Stat(filepath.Join(workDir, agentsFileToStage)); statErr == nil {
+			agentsCmd := initArtifactGitCommand(workDir, "add", agentsFileToStage)
+			_ = agentsCmd.Run()
+		}
+		// Also stage Claude settings if created by init
+		claudeSettingsPath := filepath.Join(".claude", "settings.json")
+		if _, statErr := os.Stat(filepath.Join(workDir, claudeSettingsPath)); statErr == nil {
+			claudeCmd := initArtifactGitCommand(workDir, "add", claudeSettingsPath)
+			_ = claudeCmd.Run()
+		}
+		// Also stage CLAUDE.md if created by setup
+		if _, statErr := os.Stat(filepath.Join(workDir, "CLAUDE.md")); statErr == nil {
+			claudeMdCmd := initArtifactGitCommand(workDir, "add", "CLAUDE.md")
+			_ = claudeMdCmd.Run()
+		}
+		// Also stage Codex and Cursor project integration files if created
+		// by setup. Cursor project hooks/rules are meant to be committed
+		// (a no-op git add if .cursor/ is gitignored in this repo).
+		for _, path := range []string{".agents", ".codex", ".cursor"} {
+			if _, statErr := os.Stat(filepath.Join(workDir, path)); statErr == nil {
+				codexCmd := initArtifactGitCommand(workDir, "add", path)
+				_ = codexCmd.Run()
+			}
+		}
+		// Also stage .gitignore if modified by EnsureProjectGitignore
+		if _, statErr := os.Stat(filepath.Join(workDir, ".gitignore")); statErr == nil {
+			giCmd := initArtifactGitCommand(workDir, "add", ".gitignore")
+			_ = giCmd.Run()
+		}
+		// Hooks installed by this init can call back into bd. Skip all
+		// of them for the bootstrap commit to avoid self-deadlocking
+		// while init still owns the embedded Dolt lock. --no-verify
+		// alone does not skip prepare-commit-msg.
+		commitArgs := []string{"-c", "core.hooksPath=", "commit", "--no-verify", "-m", "bd init: initialize beads issue tracking"}
+		commitCmd := initArtifactGitCommand(workDir, commitArgs...)
+		if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
+			if !quiet && !strings.Contains(string(commitOut), "nothing to commit") {
+				fmt.Fprintf(os.Stderr, "Warning: failed to commit beads files: %v\n", commitErr)
+			}
+		} else if !quiet {
+			fmt.Printf("  %s Committed beads files to git\n", ui.RenderPass("✓"))
+		}
+		// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
+		// directory — including noms/LOCK files. These are Dolt-internal files.
+		// Removing them WILL cause unrecoverable data corruption and data loss.
+		// Dolt manages these files itself; external interference is never safe.
+	}
+}
+
+func initArtifactGitCommand(workDir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir, cmd.Env = workDir, gitenv.ScrubRouting(os.Environ())
+	return cmd
 }
