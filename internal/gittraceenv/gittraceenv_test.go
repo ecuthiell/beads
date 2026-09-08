@@ -183,6 +183,8 @@ func TestScrubEnvWindowsCaseInsensitiveNames(t *testing.T) {
 func TestScrubEnvDoesNotEqualFoldUnicodeKeys(t *testing.T) {
 	// EqualFold considers the Unicode long s equivalent to ASCII s. os/exec's
 	// Windows key identity uses strings.ToLower and keeps them distinct.
+	// The required Windows helper lane runs this: restoring EqualFold cannot
+	// be detected by this test's POSIX execution alone.
 	nearCollision := "GIT_TRACE_ſETUP=1"
 	got := ScrubEnv([]string{nearCollision})
 	if !slices.Equal(got, []string{nearCollision}) {
