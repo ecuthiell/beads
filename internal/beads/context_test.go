@@ -1356,6 +1356,20 @@ func TestRoleIgnoresInheritedGitRouting(t *testing.T) {
 			}
 		})
 	}
+	t.Run("common_dir", func(t *testing.T) {
+		commonDir := filepath.Join(decoy, ".git")
+		t.Setenv("GIT_COMMON_DIR", commonDir)
+		// Unlike GIT_DIR, this key is not overridden by the generic repository pins.
+		if role, ok := rc.Role(); !ok || role != Maintainer {
+			t.Errorf("Role() = %q, %v; want maintainer, true", role, ok)
+		}
+		if out, err := rc.GitOutput(t.Context(), "config", "--get", "beads.role"); err != nil || strings.TrimSpace(out) != string(Contributor) {
+			t.Errorf("generic GitOutput = %q, %v; want contributor", out, err)
+		}
+		if os.Getenv("GIT_COMMON_DIR") != commonDir {
+			t.Error("Role changed parent GIT_COMMON_DIR")
+		}
+	})
 	t.Run("live_values", func(t *testing.T) {
 		for _, value := range []string{"contributor", "invalid", ""} {
 			runGit(t, "-C", target, "config", "beads.role", value)
