@@ -19,8 +19,30 @@ func TestKeyIdentityForWindows(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := keyIdentityForWindows(tt.key, tt.windows); got != tt.want {
-				t.Errorf("keyIdentityForWindows(%q, %v) = %q, want %q", tt.key, tt.windows, got, tt.want)
+			goos := "linux"
+			if tt.windows {
+				goos = "windows"
+			}
+			if got := KeyIdentityForOS(tt.key, goos); got != tt.want {
+				t.Errorf("KeyIdentityForOS(%q, %q) = %q, want %q", tt.key, goos, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntryKey(t *testing.T) {
+	for _, tc := range []struct{ entry, want string }{
+		{"NAME=value=with=equals", "NAME"},
+		{"NAME=", "NAME"},
+		{"GIT_CONFIG_COUNT", "GIT_CONFIG_COUNT"},
+		{"GIT_DIR", "GIT_DIR"},
+		{"", ""},
+		{`=C:=C:\work`, "=C:"},
+		{"=leading", ""},
+	} {
+		t.Run(tc.entry, func(t *testing.T) {
+			if got := EntryKey(tc.entry); got != tc.want {
+				t.Errorf("EntryKey(%q) = %q, want %q", tc.entry, got, tc.want)
 			}
 		})
 	}
