@@ -29,6 +29,7 @@ set -euo pipefail
 # Exit codes:
 #   0  All scenarios passed
 #   1  One or more scenarios failed
+#   2  Invalid nonempty CANDIDATE_BIN (compiler failures retain their exit status)
 # =============================================================================
 
 RED='\033[0;31m'
@@ -139,8 +140,14 @@ get_previous_binary() {
     echo "$cached"
 }
 
+# Refuse invalid prebuilt input early; build only after the previous release is available.
+if [ -n "${CANDIDATE_BIN:-}" ]; then
+    CAND_BIN=$(build_candidate) || exit $?
+fi
 PREV_BIN=$(get_previous_binary)
-CAND_BIN=$(build_candidate) || exit $?
+if [ -z "${CANDIDATE_BIN:-}" ]; then
+    CAND_BIN=$(build_candidate) || exit $?
+fi
 
 echo "Previous: $PREV_BIN (${PREV_VERSION})"
 echo "Candidate: $CAND_BIN"

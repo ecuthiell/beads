@@ -28,6 +28,7 @@ set -uo pipefail
 # Exit codes:
 #   0  All tested versions passed (skips don't count as failures)
 #   1  One or more versions failed verification after upgrade
+#   2  Invalid nonempty CANDIDATE_BIN (compiler failures retain their exit status)
 # =============================================================================
 
 RED='\033[0;31m'

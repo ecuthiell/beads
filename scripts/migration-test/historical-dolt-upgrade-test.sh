@@ -29,6 +29,7 @@ Runs the authentic historical SQLite bridges (v0.9.1, v0.17.0, v0.49.6, v0.50.3)
 (v0.63.3, v1.0.0, v1.0.1, v1.1.0, v1.1.2, v1.2.2) against CANDIDATE_BIN. Every release archive is pinned and verified.
 The wisp-capable sources (v1.0.1, v1.1.0, v1.1.2, v1.2.2) additionally run a wisp-plane lane in a fresh workspace,
 which needs the pinned external Dolt runtime as a read-only oracle.
+An invalid nonempty CANDIDATE_BIN exits 2; compiler failures retain their exit status.
 EOF
 }
 
