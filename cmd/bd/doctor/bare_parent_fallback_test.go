@@ -173,6 +173,7 @@ func TestDoctorWorktreeFallbackIgnoresInheritedRouting(t *testing.T) {
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, t.TempDir())
 	}
+	// Production ScrubRouting removes this flag; it does not suppress system config there.
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	targetParent, target := setupBareParentWorktreeForDoctorTest(t)
 	decoyParent, decoy := setupBareParentWorktreeForDoctorTest(t)
