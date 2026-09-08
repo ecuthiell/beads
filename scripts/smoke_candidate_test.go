@@ -218,15 +218,6 @@ func TestSmokeCandidateEntrypointOrdering(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			const fakeGo = `#!/usr/bin/env bash
-printf '%s\n' "$0 $*" >> "$BEADS_CANDIDATE_FORBIDDEN"
-[ "$#" = 4 ] && [ "$1" = build ] && [ "$2" = -o ] && [ "$4" = ./cmd/bd ] || exit 92
-case "$3" in "$HOME/.cache/beads-regression/bd-candidate-"*) ;; *) exit 92;; esac
-printf 'owned successful compiler output' > "$3"
-`
-			if err := os.WriteFile(filepath.Join(bin, "go"), []byte(fakeGo), 0755); err != nil {
-				t.Fatal(err)
-			}
 			if tc.wantExit == 1 {
 				const failedDownload = "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$BEADS_CANDIDATE_DOWNLOAD\"\nexit 63\n"
 				if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(failedDownload), 0755); err != nil {
