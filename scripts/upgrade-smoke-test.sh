@@ -30,6 +30,7 @@ set -euo pipefail
 #   0  All scenarios passed
 #   1  One or more scenarios failed
 #   2  Invalid nonempty CANDIDATE_BIN (compiler failures retain their exit status)
+# SMOKE_VERSIONS dispatch returns 1 if any child fails, including child status 2.
 # =============================================================================
 
 RED='\033[0;31m'
