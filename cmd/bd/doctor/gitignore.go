@@ -788,23 +788,11 @@ func EnsureProjectGitignore(repoPath string) error {
 		return nil // All patterns already present
 	}
 
-	lineEnding := gitignore.AppendLineEnding(content)
-	newContent := existingContent
-	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
-		if strings.HasSuffix(newContent, "\r") {
-			newContent += "\n" // Complete the existing CR without doubling it.
-		} else {
-			newContent += lineEnding
-		}
-	}
-
-	newContent += lineEnding + ProjectGitignoreHeader + lineEnding
-	for _, pattern := range toAdd {
-		newContent += pattern + lineEnding
-	}
+	lines := append([]string{"", ProjectGitignoreHeader}, toAdd...)
+	newContent := gitignore.AppendLines(content, lines)
 
 	// #nosec G306 -- gitignore needs to be readable by git and collaborators
-	if err := os.WriteFile(gitignorePath, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(gitignorePath, newContent, 0644); err != nil {
 		return fmt.Errorf("failed to write .gitignore: %w", err)
 	}
 

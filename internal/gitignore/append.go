@@ -13,3 +13,27 @@ func AppendLineEnding(content []byte) string {
 	}
 	return "\n"
 }
+
+// AppendLines appends logical lines using the existing file's line ending,
+// preserving existing bytes and completing any unterminated final line.
+// Callers choose their own blank lines, headers and patterns. No lines is a no-op.
+func AppendLines(content []byte, lines []string) []byte {
+	if len(lines) == 0 {
+		return content
+	}
+	lineEnding := AppendLineEnding(content)
+	var buf bytes.Buffer
+	buf.Write(content)
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		if content[len(content)-1] == '\r' {
+			buf.WriteByte('\n') // Complete the existing CR without doubling it.
+		} else {
+			buf.WriteString(lineEnding)
+		}
+	}
+	for _, line := range lines {
+		buf.WriteString(line)
+		buf.WriteString(lineEnding)
+	}
+	return buf.Bytes()
+}
