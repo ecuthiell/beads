@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	storagefs "github.com/steveyegge/beads/internal/storage/fs"
 	storagegit "github.com/steveyegge/beads/internal/storage/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -513,6 +514,62 @@ func TestProxiedInitTailGitUsesSelectedDirectory(t *testing.T) {
 				require.Equal(t, before, read(path), "tail changed %s", path)
 			}
 			require.True(t, slices.Equal(env, os.Environ()), "tail changed inherited environment")
+		})
+	}
+}
+
+func TestProxiedInitExcludeUsesSelectedDirectory(t *testing.T) {
+	for _, name := range []string{"stealth", "setup_exclude", "target_fork", "decoy_fork"} {
+		t.Run(name, func(t *testing.T) {
+			worktree, decoy, commonExclude, privateExclude := newInitExcludeRepos(t)
+			if name == "target_fork" {
+				initExcludeGit(t, worktree, "remote", "add", "upstream", "https://example.test/target.git")
+			} else if name == "decoy_fork" {
+				initExcludeGit(t, decoy, "remote", "add", "upstream", "https://example.test/decoy.git")
+			}
+			storage := t.TempDir()
+			t.Setenv("BEADS_DIR", storage)
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			decoyConfig, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
+			require.NoError(t, err)
+			env := os.Environ()
+			// Construct the same selected provider/adapter used before the real init tail.
+			fsUseCase := storagefs.NewFileSystemProvider(worktree, newBeadsDirTemplates(), newInitFileSystemAdapters(worktree)).BeadsDirFSUseCase()
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("setup-exclude", name == "setup_exclude", "")
+			in := initProxiedServerInput{stealth: name == "stealth", quiet: true, nonInteractive: true, skipHooks: true, skipAgents: true}
+			tail := runInitTailContext{workDir: worktree, beadsDir: storage, fsUseCase: fsUseCase, gitUC: storagegit.NewGitProvider(worktree).GitUseCase()}
+			for range 2 {
+				stderr := captureStderr(t, func() {
+					if in.stealth {
+						require.NoError(t, fsUseCase.SetupStealthMode(t.Context(), false))
+					}
+					require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, tail))
+				})
+				require.Empty(t, stderr)
+			}
+			want := "# preserved\r\n"
+			if in.stealth {
+				want += "\r\n# Beads stealth mode (added by bd init --stealth)\r\n.beads/\r\n.claude/settings.local.json\r\n"
+			} else if name != "decoy_fork" {
+				want += "\r\n# Beads fork protection (bd init)\r\n.beads/\r\n**/RECOVERY*.md\r\n**/SESSION*.md\r\n"
+			}
+			data, err := os.ReadFile(commonExclude)
+			require.NoError(t, err)
+			require.Equal(t, want, string(data), "selected common exclude bytes")
+			data, err = os.ReadFile(filepath.Join(decoy, ".git", "info", "exclude"))
+			require.NoError(t, err)
+			require.Equal(t, "# preserved\r\n", string(data))
+			data, err = os.ReadFile(filepath.Join(decoy, ".git", "config"))
+			require.NoError(t, err)
+			require.Equal(t, decoyConfig, data)
+			_, err = os.Stat(privateExclude)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			entries, err := os.ReadDir(storage)
+			require.NoError(t, err)
+			require.Empty(t, entries, "storage location became the Git project")
+			require.True(t, slices.Equal(env, os.Environ()))
 		})
 	}
 }
