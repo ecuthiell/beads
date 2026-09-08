@@ -665,10 +665,64 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 				want = ""
 			}
 			if name != "write_only" {
-				want += "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
+				suffix := "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
+				if name == "readable" {
+					suffix = strings.ReplaceAll(suffix, "\n", "\r\n")
+				}
+				want += suffix
 			}
 			if got, err := os.ReadFile(ignorePath); err != nil || string(got) != want {
 				t.Errorf("global ignore bytes = %q, want %q: %v", got, want, err)
+			}
+		})
+	}
+}
+
+func TestSetupGlobalGitIgnorePreservesAppendLineEndings(t *testing.T) {
+	const lfHeader = "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n"
+	const crlfHeader = "\r\n# Beads stealth mode: /test/project (added by bd init --stealth)\r\n"
+	const lfBlock = lfHeader + "/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
+	const crlfBlock = crlfHeader + "/test/project/.beads/\r\n/test/project/.claude/settings.local.json\r\n"
+	for _, tc := range []struct{ name, content, want string }{
+		{"missing", "", lfBlock},
+		{"empty", "", lfBlock},
+		{"LF", "local\n", "local\n" + lfBlock},
+		{"CRLF", "local\r\n", "local\r\n" + crlfBlock},
+		{"mixed", "a\r\nb\n", "a\r\nb\n" + lfBlock},
+		{"unterminated LF", "local", "local\n" + lfBlock},
+		{"unterminated CRLF", "a\r\nlast", "a\r\nlast\r\n" + crlfBlock},
+		{"pending CRLF", "a\r\nlast\r", "a\r\nlast\r\n" + crlfBlock},
+		{"pending CR", "last\r", "last\r\n" + lfBlock},
+		{"partial beads", crlfHeader + "/test/project/.beads/\r\n", crlfHeader + "/test/project/.beads/\r\n" + crlfHeader + "/test/project/.claude/settings.local.json\r\n"},
+		{"partial claude", "/test/project/.claude/settings.local.json\n", "/test/project/.claude/settings.local.json\n" + lfHeader + "/test/project/.beads/\n"},
+		{"substring membership", "# /test/project/.beads/ note\r\n", "# /test/project/.beads/ note\r\n" + crlfHeader + "/test/project/.claude/settings.local.json\r\n"},
+		{"complete no-op", "# /test/project/.beads/ and /test/project/.claude/settings.local.json\r", "# /test/project/.beads/ and /test/project/.claude/settings.local.json\r"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Chdir(homeDir)
+			configPath := filepath.Join(homeDir, "gitconfig")
+			ignorePath := filepath.Join(homeDir, "global ignore")
+			t.Setenv("GIT_CONFIG_GLOBAL", configPath)
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			t.Setenv("GIT_CONFIG_COUNT", "0")
+			t.Setenv("GIT_CONFIG_PARAMETERS", "")
+			cmd := exec.Command("git", "config", "--file", configPath, "core.excludesfile", ignorePath)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("configure owned global excludesfile: %v\n%s", err, out)
+			}
+			if tc.name != "missing" {
+				if err := os.WriteFile(ignorePath, []byte(tc.content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for pass := 1; pass <= 2; pass++ {
+				if err := setupGlobalGitIgnore(homeDir, "/test/project", false); err != nil {
+					t.Fatalf("pass %d setup global ignore: %v", pass, err)
+				}
+				if got, err := os.ReadFile(ignorePath); err != nil || string(got) != tc.want {
+					t.Fatalf("pass %d bytes = %q, want %q: %v", pass, got, tc.want, err)
+				}
 			}
 		})
 	}
