@@ -26,15 +26,20 @@ func TestUpgradeSmokeMultiVersionDispatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Mkdir(filepath.Join(dir, "scripts"), 0755); err != nil {
-				t.Fatal(err)
-			}
-			for _, path := range []string{"scripts/upgrade-smoke-test.sh", ".buildflags"} {
+			const candidateHelper = "scripts/lib/smoke-candidate.sh"
+			for _, path := range []string{"scripts/upgrade-smoke-test.sh", ".buildflags", candidateHelper} {
 				data, err := os.ReadFile(filepath.Join(sourceRepoRoot(t), path))
 				if err != nil {
+					if path == candidateHelper && os.IsNotExist(err) {
+						continue
+					}
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, path), data, 0755); err != nil {
+				destination := filepath.Join(dir, path)
+				if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(destination, data, 0755); err != nil {
 					t.Fatal(err)
 				}
 			}
