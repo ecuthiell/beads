@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -506,5 +508,74 @@ func TestAddExcludePatternsPreservesAppendLineEndings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAddExcludePatternsRefusesReadErrors(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		if os.Getenv("BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION") == "1" {
+			t.Fatal("exclude read-error coverage requires an unprivileged POSIX permission boundary")
+		}
+		t.Skip("write-only permission coverage requires an unprivileged POSIX host")
+	}
+	dir := newGitRepo(t)
+	path, err := resolveGitExcludePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const before = "user-rule\r\n"
+	if err := os.WriteFile(path, []byte(before), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(path, 0600); err != nil {
+			t.Errorf("restore exclude mode: %v", err)
+		}
+	})
+	if err := os.Chmod(path, 0200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(path); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("read-denied precondition: %v", err)
+	}
+	// Prove a write would succeed without truncating the bytes being protected.
+	writable, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("write-allowed precondition: %v", err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+	added, gotPath, err := addExcludePatterns(dir, "# managed", []string{".beads/"})
+	if restoreErr := os.Chmod(path, 0600); restoreErr != nil {
+		t.Fatal(restoreErr)
+	}
+	if err == nil || !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "failed to read git exclude file") {
+		t.Errorf("expected contextual wrapped permission error, got %v", err)
+	}
+	if added != nil || gotPath != path {
+		t.Errorf("read failure returned added=%v path=%q, want nil and %q", added, gotPath, path)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != before {
+		t.Errorf("exclude bytes after read failure = %q, want %q: %v", got, before, err)
+	}
+}
+
+func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
+	dir := newGitRepo(t)
+	path, err := resolveGitExcludePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	added, gotPath, err := addExcludePatterns(dir, "# managed", []string{".beads/"})
+	if err != nil || gotPath != path || len(added) != 1 || added[0] != ".beads/" {
+		t.Fatalf("create missing exclude: added=%v path=%q err=%v", added, gotPath, err)
+	}
+	const want = "\n# managed\n.beads/\n"
+	if got, err := os.ReadFile(path); err != nil || string(got) != want {
+		t.Errorf("created exclude = %q, want %q: %v", got, want, err)
 	}
 }

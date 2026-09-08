@@ -111,6 +111,8 @@ func addExcludePatterns(repoPath, header string, patterns []string) (added []str
 	if readContent, rerr := os.ReadFile(excludePath); rerr == nil {
 		content = readContent
 		existing = string(content)
+	} else if !os.IsNotExist(rerr) {
+		return nil, excludePath, fmt.Errorf("failed to read git exclude file: %w", rerr)
 	}
 
 	for _, p := range patterns {
