@@ -1288,14 +1288,15 @@ jobs:
           } finally {
             Pop-Location
           }
+          if (Test-Path -LiteralPath (Join-Path $fixtureRepo 'absent clean output')) {
+            throw 'Clean created a missing build directory'
+          }
           foreach ($name in @('bd', 'bd.exe')) {
             if ([IO.File]::ReadAllText((Join-Path $fixtureRepo $name)) -cne 'keep-root') {
               throw "Missing-directory clean changed root $name"
             }
           }
           Write-Output 'Native Make clean default, spaced, repeated and missing-directory checks passed'
-
-
       - name: Exercise MSYS2-hosted Make
         if: matrix.host == 'msys2'
         shell: msys2 {0}
