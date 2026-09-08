@@ -418,3 +418,101 @@ func TestProxiedInitTailRoleProbeUsesSelectedDirectory(t *testing.T) {
 		})
 	}
 }
+
+type initTailForkObservation struct {
+	domain.BeadsDirFSUseCase
+	calls int
+}
+
+func (f *initTailForkObservation) SetupForkExclude(context.Context, bool) error {
+	f.calls++
+	return nil // Observe fork selection; the exclude writer has separate coverage.
+}
+
+func TestProxiedInitTailGitUsesSelectedDirectory(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home := t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "fixture git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	read := func(path string) []byte {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return data
+	}
+	for _, name := range []string{"decoy", "invalid", "nonrepo"} {
+		t.Run(name, func(t *testing.T) {
+			target, decoy := t.TempDir(), t.TempDir()
+			for _, dir := range []string{target, decoy} {
+				if dir != target || name != "nonrepo" {
+					runGit(dir, "init", "--quiet")
+					for key, value := range map[string]string{"user.name": "Fixture", "user.email": "fixture@example.test", "commit.gpgSign": "false", "core.hooksPath": ".git/hooks"} {
+						runGit(dir, "config", "--local", key, value)
+					}
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "seed"), []byte("seed\n"), 0600))
+					runGit(dir, "add", "seed")
+					runGit(dir, "-c", "core.hooksPath=", "commit", "-m", "seed")
+				}
+				require.NoError(t, os.Mkdir(filepath.Join(dir, ".beads"), 0755))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, ".beads", "artifact"), []byte(dir), 0600))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("optional\n"), 0600))
+			}
+			runGit(decoy, "remote", "add", "upstream", "https://example.test/decoy.git")
+			runGit(decoy, "config", "beads.role", "decoy-role")
+			foreignIndex := filepath.Join(t.TempDir(), "foreign-index")
+			require.NoError(t, os.WriteFile(foreignIndex, read(filepath.Join(decoy, ".git", "index")), 0600))
+			preserved := map[string][]byte{}
+			for _, path := range []string{foreignIndex, filepath.Join(decoy, ".git", "index"), filepath.Join(decoy, ".git", "config")} {
+				preserved[path] = read(path)
+			}
+			decoyHead := runGit(decoy, "rev-parse", "HEAD")
+			gitDir := filepath.Join(decoy, ".git")
+			if name == "invalid" {
+				gitDir = filepath.Join(t.TempDir(), "missing-git-dir")
+			}
+			t.Setenv("GIT_DIR", gitDir)
+			t.Setenv("GIT_WORK_TREE", decoy)
+			t.Setenv("GIT_INDEX_FILE", foreignIndex)
+			t.Chdir(decoy)
+			env := os.Environ()
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("setup-exclude", false, "")
+			fs := &initTailForkObservation{}
+			in := initProxiedServerInput{skipHooks: true, skipAgents: true, nonInteractive: true}
+			stderr := captureStderr(t, func() {
+				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{workDir: target, beadsDir: filepath.Join(target, ".beads"), useLocalBeads: true, fsUseCase: fs, gitUC: storagegit.NewGitProvider(target).GitUseCase()}))
+			})
+			require.Zero(t, fs.calls, "decoy fork selected")
+			require.NotContains(t, stderr, "Git upstream not configured", "decoy remotes selected")
+			if name == "nonrepo" {
+				_, err := os.Stat(filepath.Join(target, ".git"))
+				require.True(t, os.IsNotExist(err), "tail manufactured a repository")
+			} else {
+				require.Equal(t, "2", runGit(target, "rev-list", "--count", "HEAD"), "target artifacts were not committed")
+				require.Equal(t, target, runGit(target, "show", "HEAD:.beads/artifact"))
+				require.Equal(t, "optional", runGit(target, "show", "HEAD:CLAUDE.md"))
+				require.Empty(t, runGit(target, "diff", "--cached", "--name-only"))
+			}
+			require.Equal(t, decoyHead, runGit(decoy, "rev-parse", "HEAD"), "decoy HEAD changed")
+			for path, before := range preserved {
+				require.Equal(t, before, read(path), "tail changed %s", path)
+			}
+			require.True(t, slices.Equal(env, os.Environ()), "tail changed inherited environment")
+		})
+	}
+}

@@ -19,15 +19,22 @@ func NewGitRepository(workDir string) domain.GitRepository {
 	return &gitRepositoryImpl{workDir: workDir}
 }
 
+// NewInitGitRepository binds init artifact operations to the selected workDir.
+// The generic constructor retains inherited routing for its existing callers.
+func NewInitGitRepository(workDir string) domain.GitRepository {
+	return &gitRepositoryImpl{workDir: workDir, env: gitenv.ScrubRouting(os.Environ())}
+}
+
 type gitRepositoryImpl struct {
 	workDir string
+	env     []string
 }
 
 var _ domain.GitRepository = (*gitRepositoryImpl)(nil)
 
 func (r *gitRepositoryImpl) gitCmd(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = r.workDir
+	cmd.Dir, cmd.Env = r.workDir, r.env
 	return cmd
 }
 
