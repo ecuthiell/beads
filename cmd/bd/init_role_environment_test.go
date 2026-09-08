@@ -269,6 +269,7 @@ func TestContributorWizardUsesTargetOrigin(t *testing.T) {
 	initRoleFixtureGit(t, target, "remote", "add", "origin", origin)
 	initRoleFixtureGit(t, target, "remote", "add", "upstream", "https://example.invalid/upstream/repo.git")
 	initRoleFixtureGit(t, decoy, "remote", "add", "origin", "git@example.invalid:decoy/repo.git")
+	// "n" cancels the decoy prompt or selects the target's existing planning directory.
 	planning := filepath.Join(target, "n")
 	if err := os.Mkdir(planning, 0750); err != nil {
 		t.Fatal(err)
