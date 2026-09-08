@@ -508,3 +508,109 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 		})
 	}
 }
+
+func TestInitArtifactGitRouting(t *testing.T) {
+	for _, kind := range []string{"ordinary", "decoy", "invalid", "missing_optional", "ignored_optional", "first_add_error", "nonrepo"} {
+		t.Run(kind, func(t *testing.T) {
+			target, decoy, home := newInitRoleFixture(t)
+			write := func(repo, path, content string) {
+				t.Helper()
+				path = filepath.Join(repo, path)
+				if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, repo := range []string{target, decoy} {
+				initRoleFixtureGit(t, repo, "config", "user.name", "Artifact Fixture")
+				initRoleFixtureGit(t, repo, "config", "user.email", "artifact@example.invalid")
+				initRoleFixtureGit(t, repo, "config", "commit.gpgSign", "false")
+				write(repo, "seed", repo)
+				initRoleFixtureGit(t, repo, "add", "seed")
+				initRoleFixtureGit(t, repo, "-c", "core.hooksPath=", "commit", "-m", "seed")
+			}
+			selected := target
+			if kind == "nonrepo" {
+				selected = t.TempDir()
+			}
+			paths := []string{".beads/fixture", "AGENTS.md", ".claude/settings.json", "CLAUDE.md", ".agents/fixture", ".codex/fixture", ".cursor/fixture", ".gitignore"}
+			for _, repo := range []string{selected, decoy} {
+				for _, path := range paths {
+					if repo == selected && (kind == "missing_optional" && path != ".beads/fixture" || kind == "first_add_error" && path == ".beads/fixture") {
+						continue
+					}
+					write(repo, path, "owned by "+repo+"\n")
+				}
+			}
+			if kind == "ignored_optional" {
+				write(selected, ".gitignore", "CLAUDE.md\n")
+			}
+			foreignIndex := filepath.Join(home, "foreign.index")
+			index, err := os.ReadFile(filepath.Join(decoy, ".git", "index"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(foreignIndex, index, 0600); err != nil {
+				t.Fatal(err)
+			}
+			stage := exec.Command("git", "add", ".beads/fixture")
+			stage.Dir, stage.Env = decoy, append(gitenv.ScrubRouting(os.Environ()), "GIT_INDEX_FILE="+foreignIndex)
+			if out, err := stage.CombinedOutput(); err != nil {
+				t.Fatalf("prepare actual foreign index: %v: %s", err, out)
+			}
+			if kind == "decoy" || kind == "nonrepo" {
+				t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+				t.Setenv("GIT_WORK_TREE", decoy)
+				t.Setenv("GIT_INDEX_FILE", foreignIndex)
+				t.Chdir(decoy)
+			} else if kind == "invalid" {
+				t.Setenv("GIT_DIR", filepath.Join(home, "missing.git"))
+				if isGitRepo() {
+					t.Fatal("invalid routing must refuse inherited probe")
+				}
+			}
+			t.Setenv("GIT_AUTHOR_NAME", "Artifact Author")
+			t.Setenv("GIT_AUTHOR_EMAIL", "author@example.invalid")
+			decoyRef := initRoleFixtureGit(t, decoy, "symbolic-ref", "HEAD")
+			preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "index"), filepath.Join(decoy, ".git", decoyRef), foreignIndex)
+			commitEmbeddedInitArtifacts(selected, true)
+			committed := kind != "first_add_error" && kind != "nonrepo"
+			wantCount := "1"
+			if committed {
+				wantCount = "2"
+			}
+			if got := initRoleFixtureGit(t, target, "rev-list", "--count", "HEAD"); got != wantCount {
+				t.Errorf("target artifact commit count = %s, want %s", got, wantCount)
+			}
+			if got := initRoleFixtureGit(t, target, "diff", "--cached", "--name-only"); got != "" {
+				t.Errorf("target index remains staged: %s", got)
+			}
+			if committed {
+				if kind == "ignored_optional" && initRoleFixtureGit(t, target, "ls-files", "--", "CLAUDE.md") != "" {
+					t.Error("ignored optional artifact was staged")
+				}
+				for _, path := range paths {
+					if kind == "missing_optional" && path != ".beads/fixture" || kind == "ignored_optional" && path == "CLAUDE.md" {
+						continue
+					}
+					want, err := os.ReadFile(filepath.Join(selected, path))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := initRoleFixtureGit(t, target, "show", "HEAD:"+path); got != strings.TrimSpace(string(want)) {
+						t.Errorf("wrong committed target artifact %s: %q", path, got)
+					}
+				}
+				if got := initRoleFixtureGit(t, target, "log", "-1", "--format=%an"); got != "Artifact Author" {
+					t.Errorf("non-routing author identity lost: %q", got)
+				}
+			} else if kind == "nonrepo" {
+				if _, err := os.Stat(filepath.Join(selected, ".git")); !os.IsNotExist(err) {
+					t.Errorf("nonrepo was mutated: %v", err)
+				}
+			}
+		})
+	}
+}
