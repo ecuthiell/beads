@@ -29,7 +29,7 @@ func TestUninstallHooksUnsetsBeadsRole(t *testing.T) {
 			t.Fatalf("uninstallHooks() failed: %v", err)
 		}
 
-		getCmd := exec.Command("git", "config", "--get", "beads.role")
+		getCmd := exec.Command("git", "config", "--local", "--get", "beads.role")
 		getCmd.Dir = tmpDir
 		out, err := getCmd.Output()
 		if err == nil {
@@ -74,7 +74,7 @@ func TestUninstallHooksReportsAmbiguousBeadsRole(t *testing.T) {
 		}
 
 		// And the key really is still set — the error was not spurious.
-		getCmd := exec.Command("git", "config", "--get-all", "beads.role")
+		getCmd := exec.Command("git", "config", "--local", "--get-all", "beads.role")
 		getCmd.Dir = tmpDir
 		out, getErr := getCmd.Output()
 		if getErr != nil {
@@ -140,7 +140,7 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"ordinary", "selected_repository", "bare_external", "invalid", "inline_absent", "selected_config", "global_role", "config_lock"} {
+	for _, name := range []string{"ordinary", "selected_repository", "bare_external", "invalid", "inline_absent", "selected_config", "global_role", "config_lock", "global_only"} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
@@ -149,7 +149,7 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 			global := filepath.Join(home, ".gitconfig")
 			globalData := "[user]\n\tname = fixture global\n"
-			if name == "global_role" {
+			if name == "global_role" || name == "global_only" {
 				globalData += "[beads]\n\trole = global-default\n"
 			}
 			if err := os.WriteFile(global, []byte(globalData), 0o600); err != nil {
@@ -210,6 +210,11 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 					t.Fatalf("GIT_CONFIG did not select decoy: %q", got)
 				}
 				must(decoy, "config", "--unset", "beads.routing-test")
+			case "global_only":
+				must(cwd, "config", "--local", "--unset", "beads.role")
+				if got := must(cwd, "config", "--get", "beads.role"); got != "global-default" {
+					t.Fatalf("global-only role precondition = %q", got)
+				}
 			case "config_lock":
 				if err := os.WriteFile(filepath.Join(selected, "config.lock"), []byte("owned lock"), 0o600); err != nil {
 					t.Fatal(err)
@@ -218,7 +223,7 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 			saved := map[string][]byte{global: []byte(globalData)}
 			for _, repo := range []string{cwd, decoy} {
 				for _, path := range []string{filepath.Join(repo, ".git", "config"), filepath.Join(repo, ".git", "index"), filepath.Join(repo, ".git", "hooks", "pre-commit")} {
-					if path == filepath.Join(selected, "config") && name != "invalid" && name != "config_lock" {
+					if path == filepath.Join(selected, "config") && name != "invalid" && name != "config_lock" && name != "global_only" {
 						continue
 					}
 					if data, err := os.ReadFile(path); err == nil {

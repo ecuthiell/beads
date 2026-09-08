@@ -1410,6 +1410,7 @@ func resetHooksPathIfBeadsManaged() error {
 		return nil // not in a git repo
 	}
 
+	// These checks are defensive: repoRoot and commonDir share the cached Git context.
 	commonDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return fmt.Errorf("resolve Git common directory for role reset: %w", err)
@@ -1445,12 +1446,13 @@ func resetHooksPathIfBeadsManaged() error {
 	// which is the exact failure this is supposed to stop.
 	// Keep the selected main/common config, including bare repositories with an
 	// external worktree, while dropping routing overrides from both commands.
+	// The presence query must use the same local scope as the unset.
 	roleEnv := gitenv.ScrubRouting(os.Environ())
-	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--get", "beads.role")
+	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
 	getRoleCmd.Env = roleEnv
 	if _, err := getRoleCmd.Output(); err == nil {
-		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--unset", "beads.role")
+		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
 		roleCmd.Env = roleEnv
 		if output, err := roleCmd.CombinedOutput(); err != nil {
