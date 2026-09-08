@@ -457,7 +457,11 @@ func TestAddExcludePatternsPreservesAppendLineEndings(t *testing.T) {
 	const lf = "\n# managed\n.beads/\ncache/\n"
 	const crlf = "\r\n# managed\r\n.beads/\r\ncache/\r\n"
 	for _, tc := range []struct{ name, existing, want, added string }{
-		{"empty", "", lf, ".beads/,cache/"},
+		{"empty", "", "# managed\n.beads/\ncache/\n", ".beads/,cache/"},
+		{"whitespace unterminated", " \t", " \t\n" + lf, ".beads/,cache/"},
+		{"blank LF", "\n", "\n" + lf, ".beads/,cache/"},
+		{"blank CRLF", "\r\n", "\r\n" + crlf, ".beads/,cache/"},
+		{"blank pending CR", "\r", "\r\n" + lf, ".beads/,cache/"},
 		{"delimiter-free", "local", "local\n" + lf, ".beads/,cache/"},
 		{"LF", "local\n", "local\n" + lf, ".beads/,cache/"},
 		{"CRLF", "local\r\n", "local\r\n" + crlf, ".beads/,cache/"},
@@ -574,7 +578,7 @@ func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
 	if err != nil || gotPath != path || len(added) != 1 || added[0] != ".beads/" {
 		t.Fatalf("create missing exclude: added=%v path=%q err=%v", added, gotPath, err)
 	}
-	const want = "\n# managed\n.beads/\n"
+	const want = "# managed\n.beads/\n"
 	if got, err := os.ReadFile(path); err != nil || string(got) != want {
 		t.Errorf("created exclude = %q, want %q: %v", got, want, err)
 	}

@@ -125,7 +125,11 @@ func addExcludePatterns(repoPath, header string, patterns []string) (added []str
 		return nil, excludePath, nil
 	}
 
-	newContent := gitignore.AppendLines(content, append([]string{"", header}, added...))
+	lines := []string{header}
+	if len(content) > 0 {
+		lines = []string{"", header}
+	}
+	newContent := gitignore.AppendLines(content, append(lines, added...))
 
 	// #nosec G306 - config file needs 0644
 	if err = os.WriteFile(excludePath, newContent, 0644); err != nil {
