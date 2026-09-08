@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	internalgit "github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitignore"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -295,8 +296,8 @@ func TestGitignoreAppendLineEnding(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := gitignoreAppendLineEnding([]byte(test.content)); got != test.want {
-				t.Fatalf("gitignoreAppendLineEnding(%q) = %q, want %q", test.content, got, test.want)
+			if got := gitignore.AppendLineEnding([]byte(test.content)); got != test.want {
+				t.Fatalf("gitignore.AppendLineEnding(%q) = %q, want %q", test.content, got, test.want)
 			}
 		})
 	}

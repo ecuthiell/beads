@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitignore"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/worktreeremove"
@@ -2085,7 +2086,7 @@ func addToGitignore(ctx context.Context, repoRoot, entry string) error {
 	}
 	defer f.Close()
 
-	lineEnding := gitignoreAppendLineEnding(content)
+	lineEnding := gitignore.AppendLineEnding(content)
 
 	// Add newline if file doesn't end with one
 	if len(content) > 0 && content[len(content)-1] != '\n' {
@@ -2105,17 +2106,6 @@ func addToGitignore(ctx context.Context, repoRoot, entry string) error {
 	}
 
 	return nil
-}
-
-// gitignoreAppendLineEnding preserves an unambiguous convention in the user's
-// repository. The file is not Beads-owned, so existing bytes are not normalized;
-// empty files and files with no delimiter, LF, or mixed EOL retain the LF default.
-func gitignoreAppendLineEnding(content []byte) string {
-	lineFeedCount := bytes.Count(content, []byte{'\n'})
-	if lineFeedCount > 0 && lineFeedCount == bytes.Count(content, []byte("\r\n")) {
-		return "\r\n"
-	}
-	return "\n"
 }
 
 func isIgnoredByGit(ctx context.Context, repoRoot, entry string) (bool, error) {
