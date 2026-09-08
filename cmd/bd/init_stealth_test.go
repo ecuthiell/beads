@@ -583,3 +583,92 @@ func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
 		t.Errorf("created exclude = %q, want %q: %v", got, want, err)
 	}
 }
+
+func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
+	for _, name := range []string{"missing", "readable", "directory", "write_only"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "write_only" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				if os.Getenv("BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION") == "1" {
+					t.Fatal("global ignore read-error coverage requires an unprivileged POSIX permission boundary")
+				}
+				t.Skip("write-only permission coverage requires an unprivileged POSIX host")
+			}
+			homeDir := t.TempDir()
+			configPath := filepath.Join(homeDir, "gitconfig")
+			ignorePath := filepath.Join(homeDir, "global ignore")
+			t.Setenv("GIT_CONFIG_GLOBAL", configPath)
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			t.Setenv("GIT_CONFIG_COUNT", "0")
+			t.Setenv("GIT_CONFIG_PARAMETERS", "")
+			cmd := exec.Command("git", "config", "--file", configPath, "core.excludesfile", ignorePath)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("configure owned global excludesfile: %v\n%s", err, out)
+			}
+			const before = "user-rule\r\n"
+			switch name {
+			case "directory":
+				if err := os.Mkdir(ignorePath, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.ReadFile(ignorePath); err == nil {
+					t.Fatal("directory read-error precondition did not fail")
+				}
+			case "readable", "write_only":
+				if err := os.WriteFile(ignorePath, []byte(before), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if name == "write_only" {
+				t.Cleanup(func() {
+					if err := os.Chmod(ignorePath, 0600); err != nil {
+						t.Errorf("restore global ignore mode: %v", err)
+					}
+				})
+				if err := os.Chmod(ignorePath, 0200); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.ReadFile(ignorePath); !errors.Is(err, os.ErrPermission) {
+					t.Fatalf("read-denied precondition: %v", err)
+				}
+				// Prove writes are allowed without truncating the bytes under test.
+				writable, err := os.OpenFile(ignorePath, os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatalf("write-allowed precondition: %v", err)
+				}
+				if err := writable.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := setupGlobalGitIgnore(homeDir, "/test/project", false)
+			if name == "write_only" {
+				if restoreErr := os.Chmod(ignorePath, 0600); restoreErr != nil {
+					t.Fatal(restoreErr)
+				}
+			}
+			if name == "directory" || name == "write_only" {
+				var pathErr *os.PathError
+				if !errors.As(err, &pathErr) || pathErr.Path != ignorePath || !strings.Contains(err.Error(), "failed to read global gitignore file") {
+					t.Errorf("expected contextual wrapped read error for %q, got %v", ignorePath, err)
+				}
+				if name == "directory" {
+					return
+				}
+				if !errors.Is(err, os.ErrPermission) {
+					t.Errorf("expected wrapped permission error, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("setup global ignore: %v", err)
+			}
+			want := before
+			if name == "missing" {
+				want = ""
+			}
+			if name != "write_only" {
+				want += "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
+			}
+			if got, err := os.ReadFile(ignorePath); err != nil || string(got) != want {
+				t.Errorf("global ignore bytes = %q, want %q: %v", got, want, err)
+			}
+		})
+	}
+}

@@ -419,6 +419,8 @@ func setupGlobalGitIgnore(homeDir string, projectPath string, verbose bool) erro
 	// #nosec G304 - user config path
 	if content, err := os.ReadFile(ignorePath); err == nil {
 		existingContent = string(content)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read global gitignore file: %w", err)
 	}
 
 	// Use absolute paths for this specific project (fixes GitHub #538)
