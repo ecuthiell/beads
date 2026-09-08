@@ -165,28 +165,18 @@ func (r *beadsDirFSRepositoryImpl) WriteProjectGitignore(ctx context.Context) er
 		return nil
 	}
 
-	lineEnding := gitignore.AppendLineEnding(existing)
-	var buf bytes.Buffer
-	buf.Write(existing)
-	if len(existing) > 0 && !bytes.HasSuffix(existing, []byte("\n")) {
-		if existing[len(existing)-1] == '\r' {
-			buf.WriteByte('\n') // Complete the existing CR without doubling it.
-		} else {
-			buf.WriteString(lineEnding)
-		}
-	}
+	var lines []string
 	if header := r.templates.ProjectGitignoreHeader; header != "" && !containsLine(existing, header) {
 		if len(existing) > 0 {
-			buf.WriteString(lineEnding)
+			lines = append(lines, "")
 		}
-		buf.WriteString(header + lineEnding)
+		lines = append(lines, header)
 	}
-	for _, pattern := range toAdd {
-		buf.WriteString(pattern + lineEnding)
-	}
+	lines = append(lines, toAdd...)
+	content := gitignore.AppendLines(existing, lines)
 
 	// #nosec G306 -- .gitignore must be world-readable so users can read/edit it
-	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("fs: WriteProjectGitignore: write: %w", err)
 	}
 	return nil
