@@ -264,6 +264,13 @@ func checkProjectExcludeStealth(repoPath string) doctor.DoctorCheck {
 	// #nosec G304 - git config path
 	if data, err := os.ReadFile(excludePath); err == nil {
 		content = string(data)
+	} else if !os.IsNotExist(err) {
+		return doctor.DoctorCheck{
+			Name:    "Project Gitignore",
+			Status:  doctor.StatusWarning,
+			Message: "Unable to read .git/info/exclude",
+			Detail:  err.Error(),
+		}
 	}
 
 	var missing []string
