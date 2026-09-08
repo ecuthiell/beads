@@ -629,7 +629,7 @@ func TestProxiedInitHooksUseSelectedContext(t *testing.T) {
 			in := initProxiedServerInput{skipHooks: name == "skip", quiet: name == "quiet_config_lock", skipAgents: true, nonInteractive: true}
 			env := os.Environ()
 			stderr := captureStderr(t, func() {
-				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{workDir: selected, beadsDir: storage, fsUseCase: fs, gitUC: storagegit.NewGitProvider(selected).GitUseCase()}))
+				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{workDir: selected, beadsDir: storage, remoteURL: "file:///unused-hooks-fixture-remote", fsUseCase: fs, gitUC: storagegit.NewGitProvider(selected).GitUseCase()}))
 			})
 			if name == "config_lock" {
 				require.Contains(t, stderr, "Failed to install git hooks")
