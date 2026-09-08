@@ -11,6 +11,11 @@ import (
 )
 
 func TestCheckBeadsRole_NotConfigured(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
 	// Create a temp directory with git init but no beads.role config
 	tmpDir := newGitRepo(t)
 
@@ -89,6 +94,11 @@ func TestCheckBeadsRole_InvalidValue(t *testing.T) {
 }
 
 func TestCheckBeadsRole_NotGitRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
 	tmpDir, err := os.MkdirTemp("", "beads-role-test")
 	if err != nil {
 		t.Fatal(err)
