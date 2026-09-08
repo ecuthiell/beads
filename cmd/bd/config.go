@@ -199,7 +199,7 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// All four bd config role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {
