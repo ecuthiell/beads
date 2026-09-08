@@ -881,12 +881,12 @@ func TestCloudAuthCLIRouting(t *testing.T) {
 	casesRun := 0
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			casesRun++
 			ctx := context.Background()
 			remote := fmt.Sprintf("origin_%d", i)
 			if err := store.AddRemote(ctx, remote, tt.remoteURL); err != nil {
 				t.Fatalf("AddRemote: %v", err)
 			}
+			casesRun++
 			addCloudAuthCLIRemote(t, store, remote, tt.remoteURL)
 			if tt.envKey != "" {
 				t.Setenv(tt.envKey, tt.envValue)
@@ -898,9 +898,9 @@ func TestCloudAuthCLIRouting(t *testing.T) {
 		})
 	}
 
-	// Every executed case must leave its distinct remote in the shared store.
-	// This catches per-case database creation without relying on machine speed,
-	// and counts only selected children so focused -run invocations still work.
+	// Every registered case must leave its distinct remote in the shared store.
+	// This verifies remote writes use that store; it cannot detect unused stores.
+	// Count only selected children so focused -run invocations still work.
 	remotes, err := store.ListRemotes(context.Background())
 	if err != nil {
 		t.Fatalf("ListRemotes: %v", err)
