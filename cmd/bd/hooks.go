@@ -863,6 +863,8 @@ func isGitTrackedFile(path string) bool {
 	inherited := os.Environ()
 	// Check the containing repository first so inherited routing cannot hide a
 	// tracked hook. The fallback preserves bare work trees and trusted config.
+	// Either index reporting a tracked path is sufficient to refuse the write,
+	// even if the other view does not track it.
 	for _, env := range [][]string{gitenv.ScrubRouting(inherited), inherited} {
 		// #nosec G204 G702 - fixed "git" command; dir/base come from the hooks
 		// directory bd itself resolved, not user input
