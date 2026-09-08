@@ -98,7 +98,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 		return fmt.Errorf("failed to get current directory: %v", err)
 	}
 
-	fsProvider := fs.NewFileSystemProvider(cwd, newBeadsDirTemplates(), newFileSystemAdapters())
+	fsProvider := fs.NewFileSystemProvider(cwd, newBeadsDirTemplates(), newInitFileSystemAdapters(cwd))
 	fsUseCase := fsProvider.BeadsDirFSUseCase()
 	gitUC := git.NewGitProvider(cwd).GitUseCase()
 
