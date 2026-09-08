@@ -10,6 +10,8 @@ import (
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
+	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
@@ -459,5 +461,74 @@ func TestGuardHookWritePathAllowsFileWhenGitUnavailable(t *testing.T) {
 	}
 	if err := guardHookWritePath(path, false); err != nil {
 		t.Fatalf("both tracking errors must retain the untracked policy: %v", err)
+	}
+}
+
+func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
+	for _, name := range []string{"tracked", "bd_owned", "shared", "symlink", "captured_fallback"} {
+		t.Run(name, func(t *testing.T) {
+			selected, _, _, common := newInitHooksFixture(t)
+			shared := name == "shared"
+			storage := filepath.Join(selected, "local-storage")
+			hooksDir := filepath.Join(storage, "hooks")
+			if shared {
+				hooksDir = filepath.Join(filepath.Dir(common), ".beads-hooks")
+			} else if name == "captured_fallback" {
+				storage = t.TempDir()
+				hooksDir = filepath.Join(storage, "hooks")
+			}
+			require.NoError(t, os.MkdirAll(hooksDir, 0755))
+			hook := filepath.Join(hooksDir, "pre-commit")
+			content := "#!/bin/sh\necho foreign\n"
+			if name == "bd_owned" {
+				content = "#!/bin/sh\n" + generateHookSection("pre-commit")
+			}
+			if name == "symlink" {
+				target := filepath.Join(t.TempDir(), "foreign hook")
+				require.NoError(t, os.WriteFile(target, []byte(content), 0755))
+				if err := os.Symlink(target, hook); err != nil {
+					t.Skipf("symlink capability unavailable: %v", err)
+				}
+			} else {
+				require.NoError(t, os.WriteFile(hook, []byte(content), 0755))
+				if name == "captured_fallback" {
+					bare := t.TempDir()
+					initExcludeGit(t, bare, "init", "--bare", "--quiet")
+					initExcludeGit(t, storage, "--git-dir", bare, "--work-tree", storage, "add", "hooks/pre-commit")
+					t.Setenv("GIT_DIR", bare)
+					t.Setenv("GIT_WORK_TREE", storage)
+					t.Setenv("GIT_INDEX_FILE", filepath.Join(bare, "index"))
+				} else {
+					repo := selected
+					if shared {
+						repo = filepath.Dir(common)
+					}
+					initExcludeGit(t, repo, "add", "--force", "--", hook)
+				}
+			}
+			fs, hooks, err := withInitHooks(nil, selected, storage)
+			require.NoError(t, err)
+			if name == "captured_fallback" {
+				require.False(t, isGitTrackedFileWithEnv(hook, hooks.env, hooks.env), "clean view must not supply the proof")
+				require.True(t, isGitTrackedFileWithEnv(hook, hooks.env, hooks.inheritedEnv), "inherited view must prove tracking")
+			}
+			t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "missing"))
+			err = fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, Shared: shared, BeadsHooks: !shared})
+			if shared || name == "bd_owned" {
+				require.NoError(t, err)
+				require.Contains(t, string(readInitHooksFile(t, hook)), hookSectionBeginPrefix)
+			} else {
+				want := "tracked by git"
+				if name == "symlink" {
+					want = "symlink"
+				}
+				require.ErrorContains(t, err, want)
+				require.Equal(t, content, string(readInitHooksFile(t, hook)))
+				for _, other := range []string{"post-merge", "pre-commit.backup"} {
+					_, err := os.Lstat(filepath.Join(hooksDir, other))
+					require.ErrorIs(t, err, os.ErrNotExist)
+				}
+			}
+		})
 	}
 }
