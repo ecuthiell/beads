@@ -594,6 +594,7 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 				t.Skip("write-only permission coverage requires an unprivileged POSIX host")
 			}
 			homeDir := t.TempDir()
+			t.Chdir(homeDir)
 			configPath := filepath.Join(homeDir, "gitconfig")
 			ignorePath := filepath.Join(homeDir, "global ignore")
 			t.Setenv("GIT_CONFIG_GLOBAL", configPath)
