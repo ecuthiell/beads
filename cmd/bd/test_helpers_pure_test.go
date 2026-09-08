@@ -412,3 +412,22 @@ func initGitRepoAt(t *testing.T, dir string) {
 		}
 	}
 }
+
+func TestPinJSONOutputRestoresAfterSubtest(t *testing.T) {
+	starting := jsonOutput
+	t.Cleanup(func() { jsonOutput = starting })
+	// Keep these children synchronous: their cleanup must finish before the
+	// parent checks the flag. The outer restore does not use the helper.
+	for _, prior := range []bool{false, true} {
+		jsonOutput = prior
+		t.Run(fmt.Sprintf("prior_%t", prior), func(t *testing.T) {
+			pinJSONOutput(t, !prior)
+			if jsonOutput != !prior {
+				t.Errorf("pinned jsonOutput = %t, want %t", jsonOutput, !prior)
+			}
+		})
+		if jsonOutput != prior {
+			t.Errorf("jsonOutput after child cleanup = %t, want prior %t", jsonOutput, prior)
+		}
+	}
+}
