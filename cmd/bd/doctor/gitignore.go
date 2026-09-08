@@ -788,7 +788,11 @@ func EnsureProjectGitignore(repoPath string) error {
 		return nil // All patterns already present
 	}
 
-	lines := append([]string{"", ProjectGitignoreHeader}, toAdd...)
+	lines := []string{ProjectGitignoreHeader}
+	if len(content) > 0 {
+		lines = append([]string{""}, lines...)
+	}
+	lines = append(lines, toAdd...)
 	newContent := gitignore.AppendLines(content, lines)
 
 	// #nosec G306 -- gitignore needs to be readable by git and collaborators
