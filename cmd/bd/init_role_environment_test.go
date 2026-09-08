@@ -381,6 +381,8 @@ func TestContributorPlanningGitIgnoresInheritedRouting(t *testing.T) {
 			if err := os.WriteFile(inputPath, []byte(planning+"\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
+			// Commit identity is retained while repository routing is scrubbed.
+			t.Setenv("GIT_AUTHOR_NAME", "Inherited Planning Author")
 			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
 			t.Setenv("GIT_WORK_TREE", decoy)
 			t.Setenv("GIT_INDEX_FILE", filepath.Join(decoy, ".git", "index"))
@@ -441,7 +443,7 @@ func TestContributorPlanningGitIgnoresInheritedRouting(t *testing.T) {
 				if names := initRoleFixtureGit(t, planning, "ls-tree", "--name-only", "HEAD"); names != "README.md" {
 					t.Errorf("planning commit tree = %q", names)
 				}
-				want := "Initial commit: beads planning repository\nPlanning Fixture\nplanning@example.invalid\nPlanning Fixture\nplanning@example.invalid"
+				want := "Initial commit: beads planning repository\nInherited Planning Author\nplanning@example.invalid\nPlanning Fixture\nplanning@example.invalid"
 				if got := initRoleFixtureGit(t, planning, "show", "-s", "--format=%s%n%an%n%ae%n%cn%n%ce", "HEAD"); got != want {
 					t.Errorf("planning commit identity = %q, want %q", got, want)
 				}
