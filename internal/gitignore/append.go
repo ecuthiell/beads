@@ -16,7 +16,9 @@ func AppendLineEnding(content []byte) string {
 
 // AppendLines appends logical lines using the existing file's line ending,
 // preserving existing bytes and completing any unterminated final line.
-// Callers choose their own blank lines, headers and patterns. No lines is a no-op.
+// A trailing CR is completed with a bare LF.
+// Callers choose their own blank lines, headers and patterns.
+// With no lines, the returned slice aliases content without copying.
 func AppendLines(content []byte, lines []string) []byte {
 	if len(lines) == 0 {
 		return content
