@@ -80,6 +80,45 @@ func TestRoutingUnicodeKeysFollowSubprocessIdentity(t *testing.T) {
 	}
 }
 
+func TestEntryKeyUsesSharedSplit(t *testing.T) {
+	for _, tc := range []struct{ entry, want string }{
+		{"KEEP=value=more", "KEEP"},
+		{`=C:=C:\work`, "=C:"},
+		{"GIT_CONFIG", "GIT_CONFIG"},
+		{"", ""},
+	} {
+		if got := EntryKey(tc.entry); got != tc.want {
+			t.Errorf("EntryKey(%q) = %q, want %q", tc.entry, got, tc.want)
+		}
+	}
+}
+
+func TestScrubRoutingUsesHostKeySemantics(t *testing.T) {
+	input := []string{
+		"GIT_DIR=canonical", "git_dir=mixed", "GİT_DİR=conservative",
+		"GIT_WORK_TREE=lookup-alias", "gİt_config_count=conservative",
+		"GıT_DIR=distinct", "GIT_ſHALLOW_FILE=distinct", "GIT_CONFIG",
+		"KEEP=first", "KEEP=second", "KEEP=GIT_DIR=value",
+		"GIT_OPTIONAL_LOCKS=1", "GIT_NO_REPLACE_OBJECTS=1", "MALFORMED", `=C:=C:\work`,
+	}
+	original := append([]string(nil), input...)
+	want := []string{
+		"GıT_DIR=distinct", "GIT_ſHALLOW_FILE=distinct",
+		"KEEP=first", "KEEP=second", "KEEP=GIT_DIR=value",
+		"GIT_OPTIONAL_LOCKS=1", "GIT_NO_REPLACE_OBJECTS=1", "MALFORMED", `=C:=C:\work`,
+	}
+	if runtime.GOOS != "windows" {
+		want = append([]string{"git_dir=mixed", "GİT_DİR=conservative",
+			"GIT_WORK_TREE=lookup-alias", "gİt_config_count=conservative"}, want...)
+	}
+	if got := ScrubRouting(input); !reflect.DeepEqual(got, want) {
+		t.Fatalf("native routing environment = %q, want %q", got, want)
+	}
+	if !reflect.DeepEqual(input, original) {
+		t.Fatalf("input environment mutated: %q", input)
+	}
+}
+
 func TestClearRoutingPreservesNonRoutingGitControls(t *testing.T) {
 	type envEntry struct {
 		key   string

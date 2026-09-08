@@ -18,7 +18,7 @@ fi
 
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
-if "$go_bin" test -count=1 -v ./internal/execenv ./internal/githooksenv ./internal/gittraceenv >"$log" 2>&1; then
+if "$go_bin" test -count=1 -v ./internal/execenv ./internal/githooksenv ./internal/gittraceenv ./internal/gitenv >"$log" 2>&1; then
     cat "$log"
 else
     status=$?
@@ -34,6 +34,7 @@ required=(
     TestScrubEnvWindowsCaseInsensitiveNames
     TestScrubEnvDoesNotEqualFoldUnicodeKeys
     TestStderrDirectedWindowsLeadingSlashIsFileTarget
+    TestScrubRoutingUsesHostKeySemantics
 )
 for name in "${required[@]}"; do
     count=$(grep -Ec "^[[:space:]]*--- PASS: $name \\(" "$log" || true)
