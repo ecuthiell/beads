@@ -2091,7 +2091,7 @@ func addToGitignore(ctx context.Context, repoRoot, entry string) error {
 	// Add newline if file doesn't end with one
 	if len(content) > 0 && content[len(content)-1] != '\n' {
 		separator := lineEnding
-		// LF convention already completes a trailing CR with this separator.
+		// Only CRLF needs this guard: the LF separator already completes a trailing CR.
 		if lineEnding == "\r\n" && content[len(content)-1] == '\r' {
 			separator = "\n" // Complete the existing CR without rewriting it.
 		}

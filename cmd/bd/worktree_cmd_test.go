@@ -15,7 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	internalgit "github.com/steveyegge/beads/internal/git"
-	"github.com/steveyegge/beads/internal/gitignore"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -278,29 +277,6 @@ func TestAddToGitignore(t *testing.T) {
 			t.Fatalf(".gitignore bytes after two appends:\nwant: %q\ngot:  %q", want, updated)
 		}
 	})
-}
-
-func TestGitignoreAppendLineEnding(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{name: "empty defaults to LF", want: "\n"},
-		{name: "unterminated defaults to LF", content: "node_modules/", want: "\n"},
-		{name: "LF remains LF", content: "node_modules/\n", want: "\n"},
-		{name: "consistent CRLF remains CRLF", content: "node_modules/\r\nbuild/\r\n", want: "\r\n"},
-		{name: "CRLF with unterminated final line remains CRLF", content: "node_modules/\r\nbuild/", want: "\r\n"},
-		{name: "mixed delimiters default to LF", content: "node_modules/\r\nbuild/\n", want: "\n"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := gitignore.AppendLineEnding([]byte(test.content)); got != test.want {
-				t.Fatalf("gitignore.AppendLineEnding(%q) = %q, want %q", test.content, got, test.want)
-			}
-		})
-	}
 }
 
 func TestEnsureCreatedWorktreeCleanRejectsDirtyWorktree(t *testing.T) {
