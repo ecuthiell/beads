@@ -140,7 +140,7 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"ordinary", "selected_repository", "bare_external", "invalid", "inline_absent", "selected_config", "global_role", "config_lock", "global_only"} {
+	for _, name := range []string{"ordinary", "selected_repository", "bare_external", "invalid", "inline_absent", "selected_config", "global_role", "config_lock", "global_only", "hooks_inline_only", "hooks_global_only", "hooks_foreign_absolute"} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
@@ -151,6 +151,9 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 			globalData := "[user]\n\tname = fixture global\n"
 			if name == "global_role" || name == "global_only" {
 				globalData += "[beads]\n\trole = global-default\n"
+			}
+			if name == "hooks_global_only" {
+				globalData += "[core]\n\thooksPath = .beads/hooks\n"
 			}
 			if err := os.WriteFile(global, []byte(globalData), 0o600); err != nil {
 				t.Fatal(err)
@@ -220,7 +223,43 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			wantHooksPath, checkHooksPath := "", true
+			switch name {
+			case "ordinary", "selected_repository", "bare_external", "selected_config":
+				must(cwd, "--git-dir", selected, "config", "--local", "core.hooksPath", ".beads/hooks")
+				if name == "selected_config" {
+					must(decoy, "config", "--local", "core.hooksPath", ".beads/hooks")
+				}
+			case "hooks_inline_only", "hooks_global_only":
+				must(cwd, "config", "--local", "--unset", "core.hooksPath")
+				if name == "hooks_inline_only" {
+					t.Setenv("GIT_CONFIG_COUNT", "1")
+					t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+					t.Setenv("GIT_CONFIG_VALUE_0", ".beads/hooks")
+				}
+			case "hooks_foreign_absolute":
+				wantHooksPath = filepath.Join(t.TempDir(), "foreign-hooks")
+				must(cwd, "config", "--local", "core.hooksPath", wantHooksPath)
+			default:
+				checkHooksPath = false
+			}
 			saved := map[string][]byte{global: []byte(globalData)}
+			if checkHooksPath {
+				for _, hooksDir := range []string{filepath.Join(cwd, ".beads", "hooks"), filepath.Join(decoy, ".beads", "hooks"), wantHooksPath} {
+					if hooksDir == "" {
+						continue
+					}
+					if err := os.MkdirAll(hooksDir, 0o750); err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(hooksDir, "pre-commit")
+					data := []byte("#!/bin/sh\necho foreign\n")
+					if err := os.WriteFile(path, data, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					saved[path] = data
+				}
+			}
 			for _, repo := range []string{cwd, decoy} {
 				for _, path := range []string{filepath.Join(repo, ".git", "config"), filepath.Join(repo, ".git", "index"), filepath.Join(repo, ".git", "hooks", "pre-commit")} {
 					if path == filepath.Join(selected, "config") && name != "invalid" && name != "config_lock" && name != "global_only" {
@@ -257,6 +296,16 @@ func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 				}
 			} else if exit, ok := readErr.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
 				t.Errorf("selected local role remains: %q, %v", out, readErr)
+			}
+			if checkHooksPath {
+				out, readErr := query(cwd, "--git-dir", selected, "config", "--local", "--get", "core.hooksPath")
+				if wantHooksPath != "" {
+					if readErr != nil || strings.TrimSpace(string(out)) != wantHooksPath {
+						t.Errorf("foreign hooksPath changed: %q, %v", out, readErr)
+					}
+				} else if exit, ok := readErr.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+					t.Errorf("selected local hooksPath remains: %q, %v", out, readErr)
+				}
 			}
 			for path, before := range saved {
 				if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {

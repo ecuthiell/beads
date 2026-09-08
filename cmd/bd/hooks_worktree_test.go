@@ -212,6 +212,11 @@ func TestResetHooksPathIfBeadsManaged_Worktree(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("configure worktree role: %v\n%s", err, out)
 	}
+	cmd = exec.Command("git", "config", "--worktree", "core.hooksPath", ".beads/hooks")
+	cmd.Dir = worktreeDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("configure worktree hooksPath: %v\n%s", err, out)
+	}
 	t.Chdir(worktreeDir)
 	git.ResetCaches()
 
@@ -224,7 +229,7 @@ func TestResetHooksPathIfBeadsManaged_Worktree(t *testing.T) {
 		t.Fatalf("resetHooksPathIfBeadsManaged failed: %v", err)
 	}
 
-	cmd = exec.Command("git", "config", "--get", "core.hooksPath")
+	cmd = exec.Command("git", "config", "--local", "--get", "core.hooksPath")
 	cmd.Dir = mainRepoDir
 	out, _ := cmd.Output()
 	if strings.TrimSpace(string(out)) != "" {
@@ -241,6 +246,12 @@ func TestResetHooksPathIfBeadsManaged_Worktree(t *testing.T) {
 	out, err = cmd.Output()
 	if err != nil || strings.TrimSpace(string(out)) != "worktree-only" {
 		t.Errorf("worktree-specific role changed: %q, %v", out, err)
+	}
+	cmd = exec.Command("git", "config", "--worktree", "--get", "core.hooksPath")
+	cmd.Dir = worktreeDir
+	out, err = cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != ".beads/hooks" {
+		t.Errorf("worktree-specific hooksPath changed: %q, %v", out, err)
 	}
 	t.Run("worktree_only", func(t *testing.T) {
 		// The first reset removed the common role; only the private worktree value remains.

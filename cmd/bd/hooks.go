@@ -1418,10 +1418,12 @@ func resetHooksPathIfBeadsManaged() error {
 	if commonDir == "" {
 		return fmt.Errorf("empty Git common directory for role reset")
 	}
+	configEnv := gitenv.ScrubRouting(os.Environ())
 	var failures []string
 
-	cmd := exec.Command("git", "config", "--get", "core.hooksPath")
+	cmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "core.hooksPath")
 	cmd.Dir = repoRoot
+	cmd.Env = configEnv
 	if out, err := cmd.Output(); err == nil {
 		hooksPath := strings.TrimSpace(string(out))
 		// Matches both relative (legacy) and absolute (GH#2414) beads hooks
@@ -1429,8 +1431,9 @@ func resetHooksPathIfBeadsManaged() error {
 		// doctor.CheckHooksPath/FixHooksPath so uninstall and `bd doctor --fix`
 		// cannot disagree about what "beads-managed" means.
 		if doctor.IsBeadsManagedHooksPath(repoRoot, hooksPath) {
-			unsetCmd := exec.Command("git", "config", "--unset", "core.hooksPath")
+			unsetCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--unset", "core.hooksPath")
 			unsetCmd.Dir = repoRoot
+			unsetCmd.Env = configEnv
 			if output, err := unsetCmd.CombinedOutput(); err != nil {
 				failures = append(failures, fmt.Sprintf("core.hooksPath: %v (output: %s)", err, strings.TrimSpace(string(output))))
 			}
@@ -1447,14 +1450,13 @@ func resetHooksPathIfBeadsManaged() error {
 	// Keep the selected main/common config, including bare repositories with an
 	// external worktree, while dropping routing overrides from both commands.
 	// The presence query must use the same local scope as the unset.
-	roleEnv := gitenv.ScrubRouting(os.Environ())
 	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
-	getRoleCmd.Env = roleEnv
+	getRoleCmd.Env = configEnv
 	if _, err := getRoleCmd.Output(); err == nil {
 		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
-		roleCmd.Env = roleEnv
+		roleCmd.Env = configEnv
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}
