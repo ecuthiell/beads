@@ -1410,6 +1410,13 @@ func resetHooksPathIfBeadsManaged() error {
 		return nil // not in a git repo
 	}
 
+	commonDir, err := git.GetGitCommonDir()
+	if err != nil {
+		return fmt.Errorf("resolve Git common directory for role reset: %w", err)
+	}
+	if commonDir == "" {
+		return fmt.Errorf("empty Git common directory for role reset")
+	}
 	var failures []string
 
 	cmd := exec.Command("git", "config", "--get", "core.hooksPath")
@@ -1436,11 +1443,16 @@ func resetHooksPathIfBeadsManaged() error {
 	// ambiguous unset" — a repo with a duplicated beads.role (bad merge, hand
 	// edit) would then report a clean uninstall while leaving the key set,
 	// which is the exact failure this is supposed to stop.
-	getRoleCmd := exec.Command("git", "config", "--get", "beads.role")
+	// Keep the selected main/common config, including bare repositories with an
+	// external worktree, while dropping routing overrides from both commands.
+	roleEnv := gitenv.ScrubRouting(os.Environ())
+	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
+	getRoleCmd.Env = roleEnv
 	if _, err := getRoleCmd.Output(); err == nil {
-		roleCmd := exec.Command("git", "config", "--unset", "beads.role")
+		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
+		roleCmd.Env = roleEnv
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}
