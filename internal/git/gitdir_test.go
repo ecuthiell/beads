@@ -178,7 +178,7 @@ func TestResolveHooksContext(t *testing.T) {
 		}
 		return NormalizePath(resolved)
 	}
-	root := t.TempDir()
+	root := canonical(t.TempDir())
 	selected, decoy := mkdir(filepath.Join(root, "selected repo")), mkdir(filepath.Join(root, "decoy repo"))
 	for _, repo := range []string{selected, decoy} {
 		git(repo, "init")
