@@ -836,6 +836,9 @@ func clearCloudAuthEnv(t *testing.T) {
 }
 
 func TestCloudAuthCLIRouting(t *testing.T) {
+	if realDoltTestServerRequired() && testServerPort == 0 {
+		t.Fatal("Dolt server required for cloud-auth routing coverage")
+	}
 	skipIfNoServer(t)
 	clearCloudAuthEnv(t)
 	start := time.Now()
