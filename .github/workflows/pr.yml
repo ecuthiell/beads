@@ -1281,14 +1281,15 @@ jobs:
               throw 'Clean changed an unrelated neighbor or directory'
             }
           }
+          $absentDir = 'absent clean output'
           Push-Location $fixtureRepo
           try {
-            & $make --no-print-directory 'BUILD_DIR=absent clean output' clean
+            & $make --no-print-directory "BUILD_DIR=$absentDir" clean
             if ($LASTEXITCODE -ne 0) { throw 'Clean failed for a missing build directory' }
           } finally {
             Pop-Location
           }
-          if (Test-Path -LiteralPath (Join-Path $fixtureRepo 'absent clean output')) {
+          if (Test-Path -LiteralPath (Join-Path $fixtureRepo $absentDir)) {
             throw 'Clean created a missing build directory'
           }
           foreach ($name in @('bd', 'bd.exe')) {
