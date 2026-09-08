@@ -265,7 +265,12 @@ func TestProxiedInitTailRoleIgnoresInheritedGitRouting(t *testing.T) {
 		{"default", "", "", "maintainer"},
 		{"retained", "contributor", "", "contributor"},
 	} {
-		for _, poison := range []string{"repository", "inline_config"} {
+		poisons := []string{"repository", "inline_config"}
+		if tc.name == "retained" {
+			// An absent decoy role must not make init replace the target contributor role.
+			poisons = append(poisons, "roleless_repository")
+		}
+		for _, poison := range poisons {
 			t.Run(tc.name+"/"+poison, func(t *testing.T) {
 				target, decoy := t.TempDir(), t.TempDir()
 				for _, dir := range []string{target, decoy} {
@@ -275,14 +280,25 @@ func TestProxiedInitTailRoleIgnoresInheritedGitRouting(t *testing.T) {
 				if tc.initial != "" {
 					runGit(t, target, "config", "--local", "beads.role", tc.initial)
 				}
-				runGit(t, decoy, "config", "--local", "beads.role", "decoy-role")
-				if poison == "repository" {
+				if poison != "roleless_repository" {
+					runGit(t, decoy, "config", "--local", "beads.role", "decoy-role")
+				}
+				if poison != "inline_config" {
 					t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
 					t.Setenv("GIT_WORK_TREE", decoy)
 				} else {
 					t.Setenv("GIT_CONFIG_COUNT", "1")
 					t.Setenv("GIT_CONFIG_KEY_0", "beads.role")
 					t.Setenv("GIT_CONFIG_VALUE_0", "injected-role")
+				}
+				if poison == "roleless_repository" {
+					inherited := exec.Command("git", "config", "--get", "beads.role")
+					inherited.Dir = target
+					out, err := inherited.CombinedOutput()
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, err, &exitErr, "roleless decoy precondition: %s", out)
+					require.Equal(t, 1, exitErr.ExitCode())
+					require.Empty(t, out)
 				}
 				env := os.Environ()
 				before, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
