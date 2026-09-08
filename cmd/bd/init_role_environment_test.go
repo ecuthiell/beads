@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -307,5 +308,153 @@ func TestContributorWizardUsesTargetOrigin(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(planning); err != nil || len(entries) != 0 {
 		t.Errorf("precreated planning directory changed: %v, %v", entries, err)
+	}
+}
+
+// Reach the automatic read, then stop either flow before config persistence.
+type initPlanningStopStore struct {
+	storage.DoltStorage
+	reads, writes []string
+}
+
+func (s *initPlanningStopStore) GetConfig(_ context.Context, key string) (string, error) {
+	s.reads = append(s.reads, key)
+	return "", nil
+}
+
+func (s *initPlanningStopStore) SetConfig(_ context.Context, key, value string) error {
+	s.writes = append(s.writes, key+"="+value)
+	return context.Canceled
+}
+
+func TestContributorPlanningGitIgnoresInheritedRouting(t *testing.T) {
+	for _, flow := range []string{"wizard", "automatic"} {
+		t.Run(flow, func(t *testing.T) {
+			target, decoy, home := newInitRoleFixture(t)
+			for _, key := range []string{"BEADS_DIR", "BD_ROUTING_CONTRIBUTOR", "BEADS_ROUTING_CONTRIBUTOR", "BEADS_DOLT_SERVER_MODE", "BEADS_DOLT_SHARED_SERVER", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_DATABASE", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+				t.Setenv(key, "")
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("DOLT_ROOT_PATH", t.TempDir())
+			t.Setenv("BD_EVENTS_JOURNAL", "false")
+			initConfigForTest(t)
+			if err := os.Unsetenv("BEADS_DIR"); err != nil {
+				t.Fatal(err)
+			}
+			hooks := filepath.Join(home, "empty-hooks")
+			if err := os.Mkdir(hooks, 0750); err != nil {
+				t.Fatal(err)
+			}
+			global := filepath.Join(home, ".gitconfig")
+			for _, setting := range [][2]string{{"user.name", "Planning Fixture"}, {"user.email", "planning@example.invalid"}, {"commit.gpgSign", "false"}, {"core.hooksPath", hooks}, {"init.defaultBranch", "main"}} {
+				initRoleFixtureGit(t, target, "config", "--file", global, setting[0], setting[1])
+			}
+			for _, repo := range []string{target, decoy} {
+				initRoleFixtureGit(t, repo, "config", "core.hooksPath", hooks)
+				initRoleFixtureGit(t, repo, "symbolic-ref", "HEAD", "refs/heads/main")
+				if err := os.WriteFile(filepath.Join(repo, "seed.txt"), []byte("owned seed\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				initRoleFixtureGit(t, repo, "add", "seed.txt")
+				initRoleFixtureGit(t, repo, "commit", "-m", "fixture seed")
+			}
+			initRoleFixtureGit(t, target, "remote", "add", "origin", "https://example.invalid/target/repo.git")
+			initRoleFixtureGit(t, target, "remote", "add", "upstream", "https://example.invalid/upstream/repo.git")
+			planning := filepath.Join(home, ".beads-planning")
+			if flow == "wizard" {
+				planning = filepath.Join(t.TempDir(), "planning with spaces")
+			}
+			if _, err := os.Stat(planning); !os.IsNotExist(err) {
+				t.Fatalf("planning path must be absent: %v", err)
+			}
+			cfg, err := configfile.Load(filepath.Join(planning, ".beads"))
+			if err != nil || cfg != nil {
+				t.Fatalf("planning metadata must be absent: %v, %v", cfg, err)
+			}
+			cfg = normalizeLoadedConfig(cfg)
+			if cfg.GetBackend() != configfile.BackendDolt || cfg.IsDoltServerMode() || cfg.IsDoltProxiedServerMode() || cfg.GetDoltDatabase() != configfile.DefaultDoltDatabase {
+				t.Fatal("planning factory must select the owned embedded default")
+			}
+			inputPath := filepath.Join(home, "stdin")
+			if err := os.WriteFile(inputPath, []byte(planning+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			t.Setenv("GIT_INDEX_FILE", filepath.Join(decoy, ".git", "index"))
+			t.Setenv("GIT_CONFIG_COUNT", "2")
+			t.Setenv("GIT_CONFIG_KEY_0", "user.name")
+			t.Setenv("GIT_CONFIG_VALUE_0", "Decoy Author")
+			t.Setenv("GIT_CONFIG_KEY_1", "user.email")
+			t.Setenv("GIT_CONFIG_VALUE_1", "decoy@example.invalid")
+			paths := []string{global, inputPath}
+			for _, repo := range []string{target, decoy} {
+				for _, name := range []string{"config", "index", "HEAD", "refs/heads/main"} {
+					paths = append(paths, filepath.Join(repo, ".git", name))
+				}
+			}
+			preserveInitRoleInputs(t, paths...)
+			store := &initPlanningStopStore{}
+			var flowErr error
+			if flow == "wizard" {
+				input, err := os.Open(inputPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer input.Close()
+				out := captureStdout(t, func() error {
+					old := os.Stdin
+					os.Stdin = input
+					defer func() { os.Stdin = old }()
+					flowErr = runContributorWizard(t.Context(), store)
+					return nil
+				})
+				if !strings.Contains(out, "Planning repository created") || len(store.reads) != 0 {
+					t.Errorf("wizard creation branch = %q, reads %v", out, store.reads)
+				}
+			} else {
+				// This really attempts optional embedded initialization with CGO;
+				// without CGO its unsupported error is ignored by the same caller.
+				flowErr = autoConfigureForkContributor(t.Context(), store, true, "")
+				if !reflect.DeepEqual(store.reads, []string{"routing.contributor"}) {
+					t.Errorf("automatic configuration reads = %v", store.reads)
+				}
+			}
+			if !errors.Is(flowErr, context.Canceled) || !reflect.DeepEqual(store.writes, []string{"routing.mode=auto"}) {
+				t.Fatalf("planning flow did not reach first persistence stop: %v, writes %v", flowErr, store.writes)
+			}
+			wantGit, err := os.Stat(filepath.Join(planning, ".git"))
+			if err != nil || !wantGit.IsDir() {
+				t.Fatalf("planning Git directory missing: %v", err)
+			}
+			actualGit := initRoleFixtureGit(t, planning, "rev-parse", "--absolute-git-dir")
+			gotGit, err := os.Stat(actualGit)
+			if err != nil || !os.SameFile(wantGit, gotGit) {
+				t.Fatalf("planning Git directory = %q, %v", actualGit, err)
+			}
+			if beads, err := os.Stat(filepath.Join(planning, ".beads")); err != nil || !beads.IsDir() {
+				t.Fatalf("planning .beads directory missing: %v", err)
+			}
+			if flow == "wizard" {
+				if names := initRoleFixtureGit(t, planning, "ls-tree", "--name-only", "HEAD"); names != "README.md" {
+					t.Errorf("planning commit tree = %q", names)
+				}
+				want := "Initial commit: beads planning repository\nPlanning Fixture\nplanning@example.invalid\nPlanning Fixture\nplanning@example.invalid"
+				if got := initRoleFixtureGit(t, planning, "show", "-s", "--format=%s%n%an%n%ae%n%cn%n%ce", "HEAD"); got != want {
+					t.Errorf("planning commit identity = %q, want %q", got, want)
+				}
+				readme, err := os.ReadFile(filepath.Join(planning, "README.md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("git", "show", "HEAD:README.md")
+				cmd.Dir, cmd.Env = planning, gitenv.ScrubRouting(os.Environ())
+				if committed, err := cmd.Output(); err != nil || string(committed) != string(readme) {
+					t.Errorf("planning README commit differs from created bytes: %v", err)
+				}
+			}
+		})
 	}
 }
