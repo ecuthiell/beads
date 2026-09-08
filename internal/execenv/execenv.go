@@ -9,7 +9,14 @@ import (
 
 // A single host seam lets package tests exercise the exported wrappers for
 // both key policies without changing the process environment.
+// Process-wide seam: tests that swap it must not run in parallel.
 var hostOS = runtime.GOOS
+
+// KeyIdentityForOS returns the key identity used by os/exec on goos. Callers
+// doing repeated membership checks can normalize once; POSIX keys stay exact.
+func KeyIdentityForOS(key, goos string) string {
+	return keyIdentityForWindows(key, goos == "windows")
+}
 
 // KeyEqual reports whether left and right identify the same environment key
 // for a subprocess on the current host. Windows keys are case-insensitive;
@@ -119,6 +126,16 @@ func keyIdentityForWindows(key string, windows bool) string {
 		return strings.ToLower(key)
 	}
 	return key
+}
+
+// EntryKey returns an entry's key using the same split rule as os/exec,
+// including drive pseudo-variables. A bare entry is returned unchanged so
+// callers retain authority over their valueless-entry policy.
+func EntryKey(entry string) string {
+	if key, _, ok := split(entry); ok {
+		return key
+	}
+	return entry
 }
 
 // split mirrors os/exec's handling of Windows drive pseudo-variables such as
