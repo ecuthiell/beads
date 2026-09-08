@@ -26,6 +26,8 @@ func TestResetDataRefNamesMatchDolt(t *testing.T) {
 
 func TestEnvWithNoGitHooksPreservesExistingParameters(t *testing.T) {
 	const existing = "'user.email=ci@example.com'"
+	// os.Environ returns key=value entries; a bare valueless parameters key
+	// cannot reach this boundary. Shared helper tests cover that slice form.
 	t.Setenv(githooksenv.ParametersEnv, existing)
 	t.Setenv("BEADS_TEST_NO_HOOKS_KEEP", "GIT_CONFIG_PARAMETERS=unrelated-value")
 
@@ -39,6 +41,11 @@ func TestEnvWithNoGitHooksPreservesExistingParameters(t *testing.T) {
 	}
 	want = append(want, githooksenv.ParametersEnv+"="+existing+" "+githooksenv.NoHooksParam)
 	if got := envWithNoGitHooks(); !slices.Equal(got, want) {
+		for i := 0; i < len(got) && i < len(want); i++ {
+			if got[i] != want[i] {
+				t.Fatalf("envWithNoGitHooks() first difference at entry %d: got key %q, want key %q (values omitted)", i, execenv.EntryKey(got[i]), execenv.EntryKey(want[i]))
+			}
+		}
 		t.Fatalf("envWithNoGitHooks() differs from the expected environment: got %d entries, want %d", len(got), len(want))
 	}
 }
