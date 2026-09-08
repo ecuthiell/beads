@@ -125,22 +125,10 @@ func addExcludePatterns(repoPath, header string, patterns []string) (added []str
 		return nil, excludePath, nil
 	}
 
-	lineEnding := gitignore.AppendLineEnding(content)
-	newContent := existing
-	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
-		if strings.HasSuffix(newContent, "\r") {
-			newContent += "\n" // Complete the existing CR without doubling it.
-		} else {
-			newContent += lineEnding
-		}
-	}
-	newContent += lineEnding + header + lineEnding
-	for _, p := range added {
-		newContent += p + lineEnding
-	}
+	newContent := gitignore.AppendLines(content, append([]string{"", header}, added...))
 
 	// #nosec G306 - config file needs 0644
-	if err = os.WriteFile(excludePath, []byte(newContent), 0644); err != nil {
+	if err = os.WriteFile(excludePath, newContent, 0644); err != nil {
 		return nil, excludePath, fmt.Errorf("failed to write git exclude file: %w", err)
 	}
 	return added, excludePath, nil
