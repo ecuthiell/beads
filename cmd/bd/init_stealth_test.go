@@ -469,9 +469,9 @@ func TestAddExcludePatternsPreservesAppendLineEndings(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := newGitRepo(t)
-			gitignore := filepath.Join(dir, ".gitignore")
+			gitignorePath := filepath.Join(dir, ".gitignore")
 			const tracked = "user-rule\r\n"
-			if err := os.WriteFile(gitignore, []byte(tracked), 0600); err != nil {
+			if err := os.WriteFile(gitignorePath, []byte(tracked), 0600); err != nil {
 				t.Fatal(err)
 			}
 			if out, err := exec.Command("git", "-C", dir, "add", "--", ".gitignore").CombinedOutput(); err != nil {
@@ -500,7 +500,7 @@ func TestAddExcludePatternsPreservesAppendLineEndings(t *testing.T) {
 				if err != nil || string(got) != tc.want {
 					t.Fatalf("pass %d exclude=%q, want %q: %v", pass, got, tc.want, err)
 				}
-				got, err = os.ReadFile(gitignore)
+				got, err = os.ReadFile(gitignorePath)
 				if err != nil || string(got) != tracked {
 					t.Fatalf("tracked .gitignore changed: %q: %v", got, err)
 				}
