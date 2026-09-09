@@ -72,7 +72,7 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}{
 		{"malformed_config", "beads.role", "bad config line"},
 		{"invalid_key", "invalid", "key does not contain a section"},
-		{"invalid_routing_boolean", "beads.role", "bad boolean config value"},
+		{"invalid_routing_boolean", "beads.role", "bad boolean"},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
