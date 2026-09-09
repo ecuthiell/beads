@@ -1501,11 +1501,10 @@ func TestEmbeddedInitRoleRouting(t *testing.T) {
 				if got := initRoleFixtureGit(t, planning, "rev-parse", "--is-inside-work-tree"); got != "true" {
 					t.Errorf("planning Git repository missing: %q", got)
 				}
-				query := exec.CommandContext(t.Context(), bd, "config", "get", "routing.contributor")
-				query.Dir, query.Env = cmd.Dir, cmd.Env
-				out, err := query.CombinedOutput()
-				if err != nil || filepath.Clean(strings.TrimSpace(string(out))) != filepath.Clean(planning) {
-					t.Errorf("persisted contributor routing = %q, %v; want %q", out, err, planning)
+				// Read the stored value; config get reads this key's YAML/default source.
+				routing := readBack(t, beadsDir, "rolefixture", "routing.contributor", false)
+				if filepath.Clean(routing) != filepath.Clean(planning) {
+					t.Errorf("persisted contributor routing = %q; want %q", routing, planning)
 				}
 				repos, err := config.GetReposFromYAML(filepath.Join(beadsDir, "config.yaml"))
 				if err != nil || len(repos.Additional) != 1 || filepath.Clean(repos.Additional[0]) != filepath.Clean(planning) {
