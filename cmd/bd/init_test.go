@@ -1125,13 +1125,14 @@ func TestInitContributorSetsBeadsRoleContributor(t *testing.T) {
 	tmpDir := newGitRepo(t)
 	t.Chdir(tmpDir)
 
-	// Configure remotes so contributor wizard doesn't ask the "continue anyway" prompt.
-	cmd := exec.Command("git", "remote", "add", "origin", "git@github.com:osamu2001/zmx.git")
+	// Local remotes avoid external lookups during initialization and let the
+	// contributor wizard detect a fork without an extra "continue anyway" prompt.
+	cmd := exec.Command("git", "remote", "add", "origin", newGitRepo(t))
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to add origin remote: %v", err)
 	}
-	cmd = exec.Command("git", "remote", "add", "upstream", "git@github.com:neurosnap/zmx.git")
+	cmd = exec.Command("git", "remote", "add", "upstream", newGitRepo(t))
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("failed to add upstream remote: %v", err)
