@@ -22,6 +22,85 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
+	// Serial: each fixture owns the process directory, environment and loaded config.
+	for _, name := range []string{"ordinary", "decoy", "invalid", "inline", "missing", "nonrepo", "bare", "stealth", "explicit", "explicit_empty", "configured", "configured_stealth", "legacy", "canceled"} {
+		t.Run(name, func(t *testing.T) {
+			target, decoy, home := newInitRoleFixture(t)
+			const selectedURL = "file:///selected-origin"
+			if name != "missing" {
+				initRoleFixtureGit(t, target, "remote", "add", "origin", selectedURL)
+			}
+			initRoleFixtureGit(t, decoy, "remote", "add", "origin", "file:///decoy-origin")
+			selected := target
+			if name == "nonrepo" || name == "bare" {
+				selected = t.TempDir()
+				if name == "bare" {
+					initRoleFixtureGit(t, home, "init", "--bare", selected)
+					initRoleFixtureGit(t, home, "--git-dir", selected, "remote", "add", "origin", selectedURL)
+				}
+			}
+			storage := t.TempDir()
+			t.Setenv("BEADS_DIR", storage)
+			for _, key := range []string{"BD_SYNC_REMOTE", "BEADS_SYNC_REMOTE", "BD_SYNC_GIT_REMOTE", "BEADS_SYNC_GIT_REMOTE"} {
+				t.Setenv(key, "")
+			}
+			in := initProxiedServerInput{}
+			want := selectedURL
+			switch name {
+			case "missing", "nonrepo", "bare", "canceled":
+				want = ""
+			case "stealth":
+				in.stealth, want = true, ""
+			case "explicit", "explicit_empty":
+				in.initRemoteChanged = true
+				in.initRemote = "dolthub://fixture/explicit"
+				if name == "explicit_empty" {
+					in.initRemote = ""
+				}
+				want = in.initRemote
+				t.Setenv("BD_SYNC_REMOTE", "dolthub://fixture/configured")
+			case "configured", "configured_stealth", "legacy":
+				want = "dolthub://fixture/configured"
+				key := "BD_SYNC_REMOTE"
+				if name == "legacy" {
+					key = "BD_SYNC_GIT_REMOTE"
+				}
+				t.Setenv(key, want)
+				in.stealth = name == "configured_stealth"
+			}
+			initConfigForTest(t)
+			if name != "ordinary" {
+				t.Chdir(decoy)
+				if name == "inline" {
+					t.Setenv("GIT_CONFIG_COUNT", "1")
+					t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
+					t.Setenv("GIT_CONFIG_VALUE_0", "file:///inline-origin")
+				} else {
+					t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+					t.Setenv("GIT_WORK_TREE", decoy)
+				}
+			}
+			if name == "invalid" {
+				t.Setenv("GIT_DIR", filepath.Join(home, "missing.git"))
+			}
+			preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(home, ".gitconfig"))
+			ctx := t.Context()
+			if name == "canceled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if got := resolveProxiedInitRemoteURL(ctx, selected, in); got != want {
+				t.Errorf("selected origin = %q, want %q", got, want)
+			}
+			if entries, err := os.ReadDir(storage); err != nil || len(entries) != 0 {
+				t.Errorf("remote lookup changed separate storage: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestBuildProxiedServerClientInfo(t *testing.T) {
 	t.Run("all empty returns nil", func(t *testing.T) {
 		info, err := buildProxiedServerClientInfo("", "", "", 0, 0, nil)
