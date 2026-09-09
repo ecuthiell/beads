@@ -131,6 +131,7 @@ func TestResetHooksPathIfBeadsManagedReportsFailureLoudly(t *testing.T) {
 }
 
 func TestResetConfigReportsReadFailure(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
 	repo := newGitRepo(t)
 	t.Chdir(repo)
 	git.ResetCaches()
