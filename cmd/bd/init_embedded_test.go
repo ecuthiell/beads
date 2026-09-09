@@ -1473,6 +1473,9 @@ func TestEmbeddedInitGitBootstrapRouting(t *testing.T) {
 			}
 			if name == "explicit_storage" {
 				beadsDir = filepath.Join(home, "separate storage", ".beads")
+				if err := os.MkdirAll(filepath.Dir(beadsDir), 0750); err != nil {
+					t.Fatal(err)
+				}
 				env = append(env, "BEADS_DIR="+beadsDir)
 			}
 			cmd.Env = append(env, "DOLT_ROOT_PATH="+home, "BD_DOLT_MODE=embedded", "BD_EVENTS_JOURNAL=false")
