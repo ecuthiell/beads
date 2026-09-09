@@ -49,6 +49,10 @@ type initProxiedServerInput struct {
 	nonInteractive         bool
 }
 
+func ensureProxiedInitGitRepo(ctx context.Context, workDir string) (domain.EnsureGitRepoResult, error) {
+	return domain.NewGitUseCase(workDir, domaingit.NewInitGitRepository(workDir)).EnsureGitRepo(ctx)
+}
+
 func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxiedServerInput) error {
 	if in.fromJSONL {
 		return fmt.Errorf("--from-jsonl is not supported with --proxied-server")
@@ -136,8 +140,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 	}
 
 	if !hasExplicitBeadsDir {
-		// Bootstrap routing is handled separately in follow-up #6460.
-		res, err := gitUC.EnsureGitRepo(ctx)
+		res, err := ensureProxiedInitGitRepo(ctx, cwd)
 		if err != nil {
 			return fmt.Errorf("failed to initialize git repository: %v", err)
 		}
