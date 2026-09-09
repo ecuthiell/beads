@@ -130,6 +130,32 @@ func TestResetHooksPathIfBeadsManagedReportsFailureLoudly(t *testing.T) {
 	})
 }
 
+func TestResetConfigReportsReadFailure(t *testing.T) {
+	repo := newGitRepo(t)
+	t.Chdir(repo)
+	git.ResetCaches()
+	t.Cleanup(git.ResetCaches)
+	common, err := git.GetGitCommonDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt the selected config after context capture so the reads, not discovery, fail.
+	path := filepath.Join(common, "config")
+	data := []byte("[invalid\n")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = resetHooksPathIfBeadsManaged()
+	for _, fragment := range []string{"read core.hooksPath", "read beads.role", "bad config"} {
+		if err == nil || !strings.Contains(err.Error(), fragment) {
+			t.Errorf("reset error = %v, want %q", err, fragment)
+		}
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(data) {
+		t.Errorf("failed read changed config: %q (%v)", after, err)
+	}
+}
+
 func TestResetRolePreservesSelectedGitContext(t *testing.T) {
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)

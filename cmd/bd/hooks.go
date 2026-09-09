@@ -1424,7 +1424,7 @@ func resetHooksPathIfBeadsManaged() error {
 	cmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "core.hooksPath")
 	cmd.Dir = repoRoot
 	cmd.Env = configEnv
-	if out, err := cmd.Output(); err == nil {
+	if out, err := cmd.CombinedOutput(); err == nil {
 		hooksPath := strings.TrimSpace(string(out))
 		// Matches both relative (legacy) and absolute (GH#2414) beads hooks
 		// paths, symlink-resolving the absolute forms. Shared with
@@ -1438,9 +1438,10 @@ func resetHooksPathIfBeadsManaged() error {
 				failures = append(failures, fmt.Sprintf("core.hooksPath: %v (output: %s)", err, strings.TrimSpace(string(output))))
 			}
 		}
+	} else if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+		failures = append(failures, fmt.Sprintf("read core.hooksPath: %v (output: %s)", err, strings.TrimSpace(string(out))))
 	}
-	// core.hooksPath not set at all — nothing to reset there; still fall
-	// through to beads.role below.
+	// Exit 1 means the key is absent. Other read failures must remain visible.
 
 	// Read before unsetting rather than treating git's exit 5 as "already
 	// absent". Exit 5 also means "the key has multiple values, refusing an
@@ -1453,13 +1454,15 @@ func resetHooksPathIfBeadsManaged() error {
 	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
 	getRoleCmd.Env = configEnv
-	if _, err := getRoleCmd.Output(); err == nil {
+	if out, err := getRoleCmd.CombinedOutput(); err == nil {
 		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
 		roleCmd.Env = configEnv
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}
+	} else if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+		failures = append(failures, fmt.Sprintf("read beads.role: %v (output: %s)", err, strings.TrimSpace(string(out))))
 	}
 
 	if len(failures) > 0 {
