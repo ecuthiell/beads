@@ -1425,7 +1425,7 @@ func resetHooksPathIfBeadsManaged() error {
 	cmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "core.hooksPath")
 	cmd.Dir = repoRoot
 	cmd.Env = configEnv
-	if out, err := cmd.CombinedOutput(); err == nil {
+	if out, err := cmd.Output(); err == nil {
 		hooksPath := strings.TrimSpace(string(out))
 		// Matches both relative (legacy) and absolute (GH#2414) beads hooks
 		// paths, symlink-resolving the absolute forms. Shared with
@@ -1440,7 +1440,11 @@ func resetHooksPathIfBeadsManaged() error {
 			}
 		}
 	} else if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
-		failures = append(failures, fmt.Sprintf("read core.hooksPath: %v (output: %s)", err, strings.TrimSpace(string(out))))
+		var diagnostic string
+		if ok {
+			diagnostic = strings.TrimSpace(string(exit.Stderr))
+		}
+		failures = append(failures, fmt.Sprintf("read core.hooksPath: %v (output: %s)", err, diagnostic))
 	}
 	// Exit 1 means the key is absent. Other read failures must remain visible.
 
