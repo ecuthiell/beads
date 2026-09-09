@@ -1173,7 +1173,7 @@ func TestBeadsRoleWriteErrorsRetainGitDiagnostics(t *testing.T) {
 					t.Chdir(t.TempDir())
 				case "config_lock":
 					require.NoError(t, os.WriteFile(filepath.Join(repo, ".git", "config.lock"), []byte("owned lock"), 0600))
-					want = "config.lock"
+					want = "could not lock config file"
 				case "duplicate":
 					run("config", "--local", "--add", "beads.role", "contributor")
 					want = "multiple values"
