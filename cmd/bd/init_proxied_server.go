@@ -546,9 +546,9 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		if role == "" {
 			role = "maintainer"
 		}
-		_, hasRole, _ := t.gitUC.BeadsRole(ctx)
+		_, hasRole, _ := gitUC.BeadsRole(ctx)
 		if !hasRole || in.roleFlag != "" {
-			if err := t.gitUC.SetBeadsRole(ctx, role); err != nil && !in.quiet {
+			if err := gitUC.SetBeadsRole(ctx, role); err != nil && !in.quiet {
 				fmt.Fprintf(os.Stderr, "Warning: failed to set beads.role: %v\n", err)
 			}
 		}

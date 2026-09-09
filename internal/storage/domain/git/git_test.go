@@ -347,7 +347,7 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 		require.NoError(t, err, "fixture git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
 	}
-	for _, kind := range []string{"ordinary", "nested", "linked", "bare", "nonrepo"} {
+	for _, kind := range []string{"ordinary", "nested", "linked", "bare", "nonrepo", "captured_home"} {
 		t.Run(kind, func(t *testing.T) {
 			target, decoy := t.TempDir(), t.TempDir()
 			runGit(decoy, "init", "--quiet")
@@ -392,6 +392,23 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 				require.Equal(t, "target", marker)
 			}
 			require.True(t, slices.Equal(env, os.Environ()))
+			if kind == "captured_home" {
+				changedHome := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(changedHome, ".gitconfig"), []byte("[invalid\n"), 0600))
+				for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+					t.Setenv(key, changedHome)
+				}
+				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
+				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
+				require.False(t, found, "generic role reads still use the current caller environment")
+				require.Empty(t, role)
+				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
+				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))
+				role, found, err = selected.GetConfig(t.Context(), "beads.role")
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, "contributor", role, "role reads and writes share the constructor's captured HOME")
+			}
 		})
 	}
 }
