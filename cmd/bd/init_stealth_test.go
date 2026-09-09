@@ -585,7 +585,7 @@ func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
 }
 
 func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
-	for _, name := range []string{"missing", "readable", "directory", "write_only"} {
+	for _, name := range []string{"missing", "dangling_symlink", "readable", "directory", "write_only"} {
 		t.Run(name, func(t *testing.T) {
 			if name == "write_only" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
 				if os.Getenv("BEADS_TEST_REQUIRE_EXCLUDE_PERMISSION") == "1" {
@@ -607,6 +607,13 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 			}
 			const before = "user-rule\r\n"
 			switch name {
+			case "dangling_symlink":
+				if err := os.Symlink(filepath.Join(homeDir, "exclude target"), ignorePath); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skipf("symlink capability unavailable: %v", err)
+					}
+					t.Fatal(err)
+				}
 			case "directory":
 				if err := os.Mkdir(ignorePath, 0755); err != nil {
 					t.Fatal(err)
@@ -642,6 +649,7 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 			}
 			err := setupGlobalGitIgnore(homeDir, "/test/project", false)
 			if name == "write_only" {
+				// Restore now for the byte assertion; Cleanup also covers an earlier Fatal.
 				if restoreErr := os.Chmod(ignorePath, 0600); restoreErr != nil {
 					t.Fatal(restoreErr)
 				}
@@ -661,14 +669,24 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 				t.Fatalf("setup global ignore: %v", err)
 			}
 			want := before
-			if name == "missing" {
+			if name == "missing" || name == "dangling_symlink" {
 				want = ""
 			}
 			if name != "write_only" {
+				// #6416/#6426 separately changes this inherited LF append policy.
 				want += "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
 			}
 			if got, err := os.ReadFile(ignorePath); err != nil || string(got) != want {
 				t.Errorf("global ignore bytes = %q, want %q: %v", got, want, err)
+			}
+			if name == "dangling_symlink" {
+				info, err := os.Lstat(ignorePath)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("global ignore symlink was replaced: %v", err)
+				}
+				if got, err := os.ReadFile(filepath.Join(homeDir, "exclude target")); err != nil || string(got) != want {
+					t.Errorf("dangling target bytes = %q, want %q: %v", got, want, err)
+				}
 			}
 		})
 	}
