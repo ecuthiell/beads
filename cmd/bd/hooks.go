@@ -1026,6 +1026,7 @@ func installHooksWithContext(hookNames []string, force, shared, chain, beadsHook
 		if err := selected.configureHooksPath(hooksDir); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)
 		}
+		selected.reportHooksActivation(hooksDir)
 	} else if beadsHooks {
 		if err := configureBeadsHooksPath(); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)

@@ -393,11 +393,24 @@ func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
 			env := os.Environ()
 			destination := filepath.Join(storage, "hooks")
 			for range 2 {
-				err := fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true})
+				var installErr error
+				stderr := captureStderr(t, func() {
+					installErr = fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true})
+				})
 				if name == "config_lock" {
-					require.ErrorContains(t, err, "failed to configure git hooks path")
+					require.ErrorContains(t, installErr, "failed to configure git hooks path")
+					require.Empty(t, stderr)
 				} else {
-					require.NoError(t, err)
+					require.NoError(t, installErr)
+					if name == "private" {
+						require.Contains(t, stderr, "are inactive in this worktree")
+						require.Contains(t, stderr, current)
+						require.Contains(t, stderr, destination)
+						require.Equal(t, current, hooks.paths.HooksDir)
+					} else {
+						require.Empty(t, stderr)
+						require.Equal(t, destination, hooks.paths.HooksDir, "status must use the newly effective destination")
+					}
 					got := initExcludeGit(t, selected, "config", "--file", filepath.Join(common, "config"), "--get", "core.hooksPath")
 					gotInfo, err := os.Stat(got)
 					require.NoError(t, err)
@@ -425,4 +438,58 @@ func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
 			require.Equal(t, env, os.Environ())
 		})
 	}
+}
+
+func TestInitHooksPrivatePathAlreadyActive(t *testing.T) {
+	for _, name := range []string{"same", "alias"} {
+		t.Run(name, func(t *testing.T) {
+			selected, _, storage, _ := newInitHooksFixture(t)
+			destination := filepath.Join(storage, "hooks")
+			require.NoError(t, os.MkdirAll(destination, 0755))
+			private := destination
+			if name == "alias" {
+				private = filepath.Join(t.TempDir(), "active hooks alias")
+				if err := os.Symlink(destination, private); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skipf("directory symlink capability unavailable: %v", err)
+					}
+					t.Fatal(err)
+				}
+			}
+			initExcludeGit(t, selected, "config", "extensions.worktreeConfig", "true")
+			initExcludeGit(t, selected, "config", "--worktree", "core.hooksPath", private)
+			privateConfig := filepath.Join(initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir"), "config.worktree")
+			before := readInitHooksFile(t, privateConfig)
+			fs, hooks, err := withInitHooks(nil, selected, storage)
+			require.NoError(t, err)
+			stderr := captureStderr(t, func() {
+				require.NoError(t, fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true}))
+			})
+			require.Empty(t, stderr, "equivalent private path must not report inactive hooks")
+			require.Equal(t, before, readInitHooksFile(t, privateConfig))
+			require.Equal(t, private, hooks.paths.HooksDir)
+			require.Contains(t, string(readInitHooksFile(t, filepath.Join(private, "pre-commit"))), hookSectionBeginPrefix)
+		})
+	}
+}
+
+func TestInitHooksActivationObservationFailure(t *testing.T) {
+	selected, _, storage, common := newInitHooksFixture(t)
+	fs, hooks, err := withInitHooks(nil, selected, storage)
+	require.NoError(t, err)
+	destination := filepath.Join(storage, "hooks")
+	require.NoError(t, fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true}))
+	before := hooks.paths
+	installed := readInitHooksFile(t, filepath.Join(destination, "pre-commit"))
+	// The write already succeeded; make a later real Git observation fail.
+	configPath := filepath.Join(common, "config")
+	const invalidConfig = "[broken config\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(invalidConfig), 0600))
+	stderr := captureStderr(t, func() { hooks.reportHooksActivation(destination) })
+	require.Contains(t, stderr, "hooks were installed at "+destination)
+	require.Contains(t, stderr, "activation could not be verified")
+	require.NotContains(t, stderr, "are inactive")
+	require.Equal(t, before, hooks.paths, "failed observation must preserve captured selection and prior status")
+	require.Equal(t, installed, readInitHooksFile(t, filepath.Join(destination, "pre-commit")))
+	require.Equal(t, invalidConfig, string(readInitHooksFile(t, configPath)), "observation must not rewrite config")
 }
