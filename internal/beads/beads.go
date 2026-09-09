@@ -611,7 +611,7 @@ func FindBeadsDirFrom(startDir string) string {
 
 	startDir = utils.CanonicalizePath(startDir)
 	repoRoot := ""
-	if out, err := gitOutput(startDir, "rev-parse", "--show-toplevel"); err == nil {
+	if out, err := selectedBeadsGitOutput(startDir, "rev-parse", "--show-toplevel"); err == nil {
 		repoRoot = utils.CanonicalizePath(out)
 	}
 

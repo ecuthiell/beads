@@ -6,11 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -2450,6 +2453,70 @@ func TestGitPathForRepo(t *testing.T) {
 			t.Fatalf("gitPathForRepo() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestFindBeadsDirFromIgnoresInheritedRouting(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	home := t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	for _, layout := range []string{"regular", "bare"} {
+		t.Run(layout, func(t *testing.T) {
+			setup := setupRegularWorktreeRepo
+			if layout == "bare" {
+				setup = setupBareParentWorktree
+			}
+			main, target := setup(t)
+			decoyMain, decoy := setup(t)
+			for _, dir := range []string{main, decoyMain} {
+				if err := os.MkdirAll(filepath.Join(dir, ".beads", "dolt"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			decoyGit := runGitInDir(t, decoy, "rev-parse", "--absolute-git-dir")
+			start := filepath.Join(target, "sub dir")
+			if err := os.Mkdir(start, 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(decoy)
+			t.Setenv("BEADS_DIR", filepath.Join(decoyMain, ".beads"))
+			for _, name := range []string{"ordinary", "decoy", "invalid", "work_tree_only"} {
+				t.Run(name, func(t *testing.T) {
+					if name != "ordinary" {
+						t.Setenv("GIT_WORK_TREE", decoy)
+						if name != "work_tree_only" {
+							gitDir := decoyGit
+							if name == "invalid" {
+								gitDir = filepath.Join(home, "missing git dir")
+							}
+							t.Setenv("GIT_DIR", gitDir)
+						}
+						got, err := gitOutput(start, "rev-parse", "--show-toplevel")
+						if (name == "invalid" && err == nil) || (name != "invalid" && (err != nil || !utils.PathsEqual(got, decoy))) {
+							t.Fatalf("inherited probe precondition: %q (%v)", got, err)
+						}
+					}
+					before := os.Environ()
+					if got := FindBeadsDirFrom(start); !utils.PathsEqual(got, filepath.Join(main, ".beads")) {
+						t.Errorf("explicit discovery = %q, want selected shared .beads", got)
+					}
+					cwd, err := os.Getwd()
+					if err != nil || !utils.PathsEqual(cwd, decoy) || !reflect.DeepEqual(before, os.Environ()) {
+						t.Errorf("explicit discovery changed process directory/environment: %q (%v)", cwd, err)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestSelectedBeadsCanonicalizerIgnoresInheritedRouting(t *testing.T) {
