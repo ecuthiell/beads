@@ -283,22 +283,21 @@ func isDetachedCommitWorktreePath(path string) bool {
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // args are internal, not user-supplied
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+	return gitOutputEnv(nil, dir, args...)
 }
 
 // selectedBeadsGitOutput probes the repository of an already selected .beads path.
+// The shared filter also removes GIT_CONFIG_* sandbox overrides; ordinary
+// system/global config becomes visible again. Config authority is a separate policy.
 func selectedBeadsGitOutput(dir string, args ...string) (string, error) {
+	return gitOutputEnv(gitenv.ScrubRouting(os.Environ()), dir, args...)
+}
+
+func gitOutputEnv(env []string, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // args are internal, not user-supplied
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = env
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
