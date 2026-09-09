@@ -76,11 +76,12 @@ func ScrubRouting(env []string) []string {
 
 // ScrubRoutingForOS removes Git routing entries using goos environment-key
 // semantics. It preserves non-routing controls such as GIT_OPTIONAL_LOCKS and
-// GIT_NO_REPLACE_OBJECTS.
+// GIT_NO_REPLACE_OBJECTS, plus explicit system/global config suppression.
+// Custom config paths and inline values still lose their routing authority.
 func ScrubRoutingForOS(env []string, goos string) []string {
 	cleaned := make([]string, 0, len(env))
 	for _, entry := range env {
-		if IsRoutingKeyForOS(EntryKey(entry), goos) {
+		if IsRoutingKeyForOS(EntryKey(entry), goos) && !isConfigSuppression(entry, goos) {
 			continue
 		}
 		cleaned = append(cleaned, entry)
@@ -88,14 +89,31 @@ func ScrubRoutingForOS(env []string, goos string) []string {
 	return cleaned
 }
 
+// IsRoutingKeyForOS stays conservative because a key alone cannot distinguish
+// config suppression from a custom file that can redirect selected operations.
+func isConfigSuppression(entry, goos string) bool {
+	key := execenv.KeyIdentityForOS(EntryKey(entry), goos)
+	_, value, assigned := strings.Cut(entry, "=")
+	if !assigned {
+		return false
+	}
+	switch key {
+	case execenv.KeyIdentityForOS("GIT_CONFIG_NOSYSTEM", goos):
+		return true // Let Git interpret its Boolean value, including invalid values.
+	case execenv.KeyIdentityForOS("GIT_CONFIG_GLOBAL", goos), execenv.KeyIdentityForOS("GIT_CONFIG_SYSTEM", goos):
+		return value == "/dev/null" || (goos == "windows" && strings.EqualFold(value, "NUL"))
+	}
+	return false
+}
+
 // ClearRouting permanently removes Git routing entries from the current
 // process. CLI callers use it as a command-lifetime authority boundary. It
-// reports whether any entry was removed.
+// retains the same config suppression as ScrubRouting and reports any removal.
 func ClearRouting() (bool, error) {
 	removed := false
 	for _, entry := range os.Environ() {
 		key := EntryKey(entry)
-		if !IsRoutingKeyForOS(key, runtime.GOOS) {
+		if !IsRoutingKeyForOS(key, runtime.GOOS) || isConfigSuppression(entry, runtime.GOOS) {
 			continue
 		}
 		if err := os.Unsetenv(key); err != nil {

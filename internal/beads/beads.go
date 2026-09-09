@@ -287,8 +287,8 @@ func gitOutput(dir string, args ...string) (string, error) {
 }
 
 // selectedBeadsGitOutput probes the repository of an already selected .beads path.
-// The shared filter also removes GIT_CONFIG_* sandbox overrides; ordinary
-// system/global config becomes visible again. Config authority is a separate policy.
+// The shared filter retains NOSYSTEM and null GLOBAL/SYSTEM suppression,
+// while discarding custom config paths and inline config overrides.
 func selectedBeadsGitOutput(dir string, args ...string) (string, error) {
 	return gitOutputEnv(gitenv.ScrubRouting(os.Environ()), dir, args...)
 }

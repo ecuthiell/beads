@@ -2606,7 +2606,7 @@ func TestResolveBeadsDirForRepoIgnoresInheritedRouting(t *testing.T) {
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, t.TempDir())
 	}
-	// Production ScrubRouting removes this flag; it does not suppress system config there.
+	// Production ScrubRouting retains this explicit system-config suppression.
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	targetParent, target := setupRegularWorktreeRepo(t)
 	decoyParent, decoy := setupRegularWorktreeRepo(t)
