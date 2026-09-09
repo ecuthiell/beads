@@ -1133,3 +1133,63 @@ func TestConfigSetManyValidationIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestBeadsRoleWriteErrorsRetainGitDiagnostics(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
+	pinJSONOutput(t, false)
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	for _, operation := range []struct {
+		name string
+		cmd  *cobra.Command
+		args []string
+	}{
+		{"set", configSetCmd, []string{"beads.role", "contributor"}},
+		{"set-many", configSetManyCmd, []string{"beads.role=contributor"}},
+		{"unset", configUnsetCmd, []string{"beads.role"}},
+	} {
+		for _, failure := range []string{"nonrepo", "config_lock", "duplicate"} {
+			t.Run(operation.name+"/"+failure, func(t *testing.T) {
+				home := t.TempDir()
+				for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+					t.Setenv(key, home)
+				}
+				repo := newGitRepo(t)
+				t.Chdir(repo)
+				run := func(args ...string) {
+					cmd := exec.Command("git", args...)
+					out, err := cmd.CombinedOutput()
+					require.NoError(t, err, "%s", out)
+				}
+				run("config", "--local", "beads.role", "maintainer")
+				want := "not a git repository"
+				switch failure {
+				case "nonrepo":
+					t.Chdir(t.TempDir())
+				case "config_lock":
+					require.NoError(t, os.WriteFile(filepath.Join(repo, ".git", "config.lock"), []byte("owned lock"), 0600))
+					want = "config.lock"
+				case "duplicate":
+					run("config", "--local", "--add", "beads.role", "contributor")
+					want = "multiple values"
+				}
+				configPath := filepath.Join(repo, ".git", "config")
+				before, err := os.ReadFile(configPath)
+				require.NoError(t, err)
+				stderr := captureStderr(t, func() { err = operation.cmd.RunE(operation.cmd, operation.args) })
+				code, ok := exitCodeFromError(err)
+				require.True(t, ok)
+				require.Equal(t, 1, code)
+				require.Contains(t, stderr, want)
+				after, readErr := os.ReadFile(configPath)
+				require.NoError(t, readErr)
+				require.Equal(t, before, after, "failed role write changed config")
+			})
+		}
+	}
+}

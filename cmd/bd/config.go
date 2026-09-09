@@ -118,7 +118,7 @@ var forceGitTracked bool
 
 // newRoleConfigWriter captures fresh cwd and scrubbed routing once per write
 // operation. The process-wide Git cache and Beads storage do not select it.
-func newRoleConfigWriter() (func(...string) *exec.Cmd, error) {
+func newRoleConfigWriter() (func(...string) error, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -128,6 +128,9 @@ func newRoleConfigWriter() (func(...string) *exec.Cmd, error) {
 	probe.Dir, probe.Env = dir, env
 	out, err := probe.Output()
 	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+		}
 		return nil, fmt.Errorf("resolving common Git config: %w", err)
 	}
 	commonDir := git.NormalizePath(strings.TrimSpace(string(out)))
@@ -137,11 +140,14 @@ func newRoleConfigWriter() (func(...string) *exec.Cmd, error) {
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(dir, commonDir)
 	}
-	return func(args ...string) *exec.Cmd {
+	return func(args ...string) error {
 		// Callers supply only the fixed role key, validated values and unset flag.
 		cmd := exec.Command("git", append([]string{"--git-dir", commonDir, "config", "--local"}, args...)...) //nolint:gosec // private validated config operations
 		cmd.Dir, cmd.Env = dir, env
-		return cmd
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	}, nil
 }
 
@@ -232,7 +238,7 @@ var configSetCmd = &cobra.Command{
 			if err != nil {
 				return HandleError("setting beads.role in git config: %v", err)
 			}
-			if err := write("beads.role", value).Run(); err != nil {
+			if err := write("beads.role", value); err != nil {
 				return HandleError("setting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -634,7 +640,7 @@ var configUnsetCmd = &cobra.Command{
 			if err != nil {
 				return HandleError("unsetting beads.role in git config: %v", err)
 			}
-			if err := write("--unset", "beads.role").Run(); err != nil {
+			if err := write("--unset", "beads.role"); err != nil {
 				return HandleError("unsetting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -930,7 +936,7 @@ Examples:
 				return HandleError("setting beads.role in git config: %v", err)
 			}
 			for _, p := range gitPairs {
-				if err := write("beads.role", p.value).Run(); err != nil {
+				if err := write("beads.role", p.value); err != nil {
 					return HandleError("setting %s in git config: %v", p.key, err)
 				}
 			}
