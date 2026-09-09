@@ -10,7 +10,38 @@ import (
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
+	"github.com/stretchr/testify/require"
 )
+
+func TestStandaloneHooksAbsoluteFallbackHasNoConfigAuthority(t *testing.T) {
+	for _, name := range []string{"nonrepo", "bare"} {
+		t.Run(name, func(t *testing.T) {
+			_, decoy, _, _ := newInitHooksFixture(t)
+			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "seed stale config authority")
+			workDir, hooksDir := t.TempDir(), t.TempDir()
+			if name == "bare" {
+				initExcludeGit(t, workDir, "init", "--bare")
+			}
+			for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} {
+				t.Setenv(key, "")
+				require.NoError(t, os.Unsetenv(key))
+			}
+			initExcludeGit(t, decoy, "config", "--global", "core.hooksPath", hooksDir)
+			t.Chdir(workDir)
+			preserveStandaloneHookInputs(t, filepath.Join(decoy, ".git", "config"), filepath.Join(os.Getenv("HOME"), ".gitconfig"))
+			for _, mode := range []string{"shared", "beads"} {
+				setStandaloneHookMode(t, mode)
+				require.ErrorContains(t, hooksInstallCmd.RunE(hooksInstallCmd, nil), "require a working Git repository")
+				require.NoFileExists(t, filepath.Join(hooksDir, "pre-commit"))
+			}
+			setStandaloneHookMode(t, "")
+			require.NoError(t, hooksInstallCmd.RunE(hooksInstallCmd, nil))
+			require.Contains(t, string(readInitHooksFile(t, filepath.Join(hooksDir, "pre-commit"))), hookSectionBeginPrefix)
+			require.NoError(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil))
+			require.NoFileExists(t, filepath.Join(hooksDir, "pre-commit"))
+		})
+	}
+}
 
 // TestUninstallHooksUnsetsBeadsRole verifies AC2: bd hooks uninstall clears
 // beads.role in addition to core.hooksPath, so a manual `rm -rf .beads/`

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/stretchr/testify/require"
 )
@@ -368,6 +369,110 @@ func readInitHooksFile(t *testing.T, path string) []byte {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return data
+}
+
+func preserveStandaloneHookInputs(t *testing.T, paths ...string) {
+	t.Helper()
+	beforeEnv := os.Environ()
+	t.Cleanup(func() { require.Equal(t, beforeEnv, os.Environ()) })
+	for _, path := range paths {
+		before := readInitHooksFile(t, path)
+		t.Cleanup(func() { require.Equal(t, before, readInitHooksFile(t, path), "changed %s", path) })
+	}
+}
+
+func setStandaloneHookMode(t *testing.T, mode string) {
+	t.Helper()
+	for _, flag := range []string{"force", "shared", "chain", "beads"} {
+		f := hooksInstallCmd.Flags().Lookup(flag)
+		old, changed := f.Value.String(), f.Changed
+		t.Cleanup(func() {
+			require.NoError(t, hooksInstallCmd.Flags().Set(flag, old))
+			f.Changed = changed
+		})
+		value := "false"
+		if flag == mode {
+			value = "true"
+		}
+		require.NoError(t, hooksInstallCmd.Flags().Set(flag, value))
+	}
+}
+
+func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
+	for _, name := range []string{"regular", "linked", "private", "shared", "beads", "bare_external", "inline", "config_file", "config_lock"} {
+		t.Run(name, func(t *testing.T) {
+			selected, decoy, storage, common := newInitHooksFixture(t)
+			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "seed stale decoy cache")
+			cwd, mainRoot := decoy, filepath.Dir(common)
+			if name == "regular" {
+				selected = mainRoot
+			}
+			private := initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir")
+			if name == "bare_external" {
+				root := t.TempDir()
+				common, selected = filepath.Join(root, "selected bare.git"), filepath.Join(root, "external tree")
+				initExcludeGit(t, root, "init", "--bare", common)
+				require.NoError(t, os.Mkdir(selected, 0755))
+				cwd, mainRoot, private = selected, selected, filepath.Join("..", "selected bare.git")
+			}
+			t.Chdir(cwd)
+			t.Setenv("GIT_DIR", private)
+			t.Setenv("GIT_WORK_TREE", selected)
+			t.Setenv("BEADS_DIR", storage)
+			require.NoError(t, os.WriteFile(filepath.Join(storage, "metadata.json"), []byte("{}\n"), 0600))
+			destination := filepath.Join(mainRoot, ".beads", "hooks")
+			initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "core.hooksPath", destination)
+			initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "beads.role", "contributor")
+			if name == "private" {
+				destination = t.TempDir()
+				initExcludeGit(t, selected, "config", "extensions.worktreeConfig", "true")
+				initExcludeGit(t, selected, "config", "--worktree", "core.hooksPath", destination)
+				preserveStandaloneHookInputs(t, filepath.Join(private, "config.worktree"))
+			}
+			if name == "shared" {
+				destination = filepath.Join(mainRoot, ".beads-hooks")
+			} else if name == "beads" {
+				destination = filepath.Join(storage, "hooks")
+			}
+			decoyHook := filepath.Join(decoy, ".git", "hooks", "pre-commit")
+			require.NoError(t, os.WriteFile(decoyHook, []byte("#!/bin/sh\n"+generateHookSection("pre-commit")), 0755))
+			if name == "inline" {
+				t.Setenv("GIT_CONFIG_COUNT", "1")
+				t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+				t.Setenv("GIT_CONFIG_VALUE_0", filepath.Dir(decoyHook))
+			}
+			if name == "config_file" {
+				initExcludeGit(t, decoy, "config", "--local", "core.hooksPath", filepath.Dir(decoyHook))
+				t.Setenv("GIT_CONFIG", filepath.Join(decoy, ".git", "config"))
+			}
+			preserveStandaloneHookInputs(t, decoyHook, filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "index"))
+			setStandaloneHookMode(t, name)
+			require.NoError(t, hooksInstallCmd.RunE(hooksInstallCmd, nil))
+			require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
+			if name == "shared" || name == "beads" {
+				got := initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
+				require.Equal(t, filepath.Clean(destination), filepath.Clean(got))
+			}
+			if name == "config_lock" {
+				require.NoError(t, os.WriteFile(filepath.Join(common, "config.lock"), []byte("owned lock"), 0600))
+				require.ErrorContains(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil), "failed to reset")
+				return
+			}
+			require.NoError(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil))
+			_, err := os.Stat(filepath.Join(destination, "pre-commit"))
+			require.ErrorIs(t, err, os.ErrNotExist)
+			query := exec.Command("git", "--git-dir", common, "config", "--local", "--get", "beads.role")
+			query.Dir, query.Env = cwd, gitenv.ScrubRouting(os.Environ())
+			var exit *exec.ExitError
+			require.ErrorAs(t, query.Run(), &exit)
+			require.Equal(t, 1, exit.ExitCode(), "selected local role must be absent")
+			if name == "beads" {
+				got := initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
+				require.Equal(t, filepath.Clean(destination), filepath.Clean(got), "outside-storage predicate remains conservative")
+			}
+			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "fresh commands must leave the legacy cache untouched")
+		})
+	}
 }
 
 func TestInitHooksPreservesManagedDirectoryAliases(t *testing.T) {
