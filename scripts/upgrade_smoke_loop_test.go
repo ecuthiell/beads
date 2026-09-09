@@ -83,6 +83,7 @@ fi
 				path = "/usr/bin:/bin"
 			}
 			// Relative fixture paths use the same mount under both Bash invocations.
+			// HOME stays absent to stop a child missing the observer before smoke setup.
 			env := []string{"PATH=" + path, "LC_ALL=C", "LANG=C", "ENV=", "BASH_ENV=",
 				"BEADS_LOOP_FAIL=" + tc.failVersion, "CANDIDATE_BIN=" + tc.candidate,
 				"SMOKE_VERSIONS=v0.62.0 v0.61.0 v0.60.0"}
@@ -96,14 +97,14 @@ fi
 			}
 			got, err := os.ReadFile(filepath.Join(dir, "calls"))
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("read child dispatch: %v; output: %s", err, out)
 			}
 			var want strings.Builder
 			for _, version := range []string{"v0.62.0", "v0.61.0", "v0.60.0"} {
 				want.WriteString(version + "\t" + tc.candidate + "\t\n")
 			}
 			if string(got) != want.String() {
-				t.Fatalf("child dispatch = %q, want %q", got, want.String())
+				t.Fatalf("child dispatch = %q, want %q; output: %s", got, want.String(), out)
 			}
 		})
 	}
