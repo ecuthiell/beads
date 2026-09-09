@@ -138,6 +138,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 	}
 
 	if !hasExplicitBeadsDir {
+		// Bootstrap routing is handled separately in follow-up #6460.
 		res, err := gitUC.EnsureGitRepo(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to initialize git repository: %v", err)
