@@ -1066,6 +1066,7 @@ func ResolveBeadsDirForRepo(repoPath string) string {
 
 func worktreeFallbackBeadsDirForRepo(repoPath string) string {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-dir", "--git-common-dir")
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
