@@ -510,7 +510,7 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 }
 
 func TestInitArtifactGitRouting(t *testing.T) {
-	for _, kind := range []string{"ordinary", "decoy", "invalid", "missing_optional", "ignored_optional", "first_add_error", "nonrepo"} {
+	for _, kind := range []string{"ordinary", "decoy", "invalid", "missing_optional", "ignored_optional", "first_add_error", "nonrepo", "nonrepo_quiet"} {
 		t.Run(kind, func(t *testing.T) {
 			target, decoy, home := newInitRoleFixture(t)
 			write := func(repo, path, content string) {
@@ -532,12 +532,16 @@ func TestInitArtifactGitRouting(t *testing.T) {
 				initRoleFixtureGit(t, repo, "-c", "core.hooksPath=", "commit", "-m", "seed")
 			}
 			selected := target
-			if kind == "nonrepo" {
+			if strings.HasPrefix(kind, "nonrepo") {
 				selected = t.TempDir()
 			}
 			paths := []string{".beads/fixture", "AGENTS.md", ".claude/settings.json", "CLAUDE.md", ".agents/fixture", ".codex/fixture", ".cursor/fixture", ".gitignore"}
 			for _, repo := range []string{selected, decoy} {
 				for _, path := range paths {
+					// The selected repo alone has AGENTS.md; the process cwd alone has CLAUDE.md.
+					if kind == "decoy" && (repo == decoy && path == "AGENTS.md" || repo == selected && path == "CLAUDE.md") {
+						continue
+					}
 					if repo == selected && (kind == "missing_optional" && path != ".beads/fixture" || kind == "first_add_error" && path == ".beads/fixture") {
 						continue
 					}
@@ -560,7 +564,7 @@ func TestInitArtifactGitRouting(t *testing.T) {
 			if out, err := stage.CombinedOutput(); err != nil {
 				t.Fatalf("prepare actual foreign index: %v: %s", err, out)
 			}
-			if kind == "decoy" || kind == "nonrepo" {
+			if kind == "decoy" || strings.HasPrefix(kind, "nonrepo") {
 				t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
 				t.Setenv("GIT_WORK_TREE", decoy)
 				t.Setenv("GIT_INDEX_FILE", foreignIndex)
@@ -575,8 +579,15 @@ func TestInitArtifactGitRouting(t *testing.T) {
 			t.Setenv("GIT_AUTHOR_EMAIL", "author@example.invalid")
 			decoyRef := initRoleFixtureGit(t, decoy, "symbolic-ref", "HEAD")
 			preserveInitRoleInputs(t, filepath.Join(target, ".git", "config"), filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "index"), filepath.Join(decoy, ".git", decoyRef), foreignIndex)
-			commitEmbeddedInitArtifacts(selected, true)
-			committed := kind != "first_add_error" && kind != "nonrepo"
+			stderr := captureStderr(t, func() { commitEmbeddedInitArtifacts(selected, kind != "nonrepo") })
+			if kind == "nonrepo" {
+				if !strings.Contains(stderr, "skipped bootstrap commit") {
+					t.Errorf("missing nonquiet refusal note: %q", stderr)
+				}
+			} else if stderr != "" {
+				t.Errorf("quiet artifact commit wrote stderr: %q", stderr)
+			}
+			committed := kind != "first_add_error" && !strings.HasPrefix(kind, "nonrepo")
 			wantCount := "1"
 			if committed {
 				wantCount = "2"
@@ -588,11 +599,11 @@ func TestInitArtifactGitRouting(t *testing.T) {
 				t.Errorf("target index remains staged: %s", got)
 			}
 			if committed {
-				if kind == "ignored_optional" && initRoleFixtureGit(t, target, "ls-files", "--", "CLAUDE.md") != "" {
-					t.Error("ignored optional artifact was staged")
+				if (kind == "ignored_optional" || kind == "decoy") && initRoleFixtureGit(t, target, "ls-files", "--", "CLAUDE.md") != "" {
+					t.Error("ignored or decoy-only optional artifact was staged")
 				}
 				for _, path := range paths {
-					if kind == "missing_optional" && path != ".beads/fixture" || kind == "ignored_optional" && path == "CLAUDE.md" {
+					if kind == "missing_optional" && path != ".beads/fixture" || (kind == "ignored_optional" || kind == "decoy") && path == "CLAUDE.md" {
 						continue
 					}
 					want, err := os.ReadFile(filepath.Join(selected, path))
@@ -606,7 +617,7 @@ func TestInitArtifactGitRouting(t *testing.T) {
 				if got := initRoleFixtureGit(t, target, "log", "-1", "--format=%an"); got != "Artifact Author" {
 					t.Errorf("non-routing author identity lost: %q", got)
 				}
-			} else if kind == "nonrepo" {
+			} else if strings.HasPrefix(kind, "nonrepo") {
 				if _, err := os.Stat(filepath.Join(selected, ".git")); !os.IsNotExist(err) {
 					t.Errorf("nonrepo was mutated: %v", err)
 				}
