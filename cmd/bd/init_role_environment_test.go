@@ -207,7 +207,7 @@ func TestAutoConfigureForkContributorIgnoresInheritedGitRouting(t *testing.T) {
 			for call := range 2 {
 				var callErr error
 				stderr := captureStderr(t, func() {
-					callErr = autoConfigureForkContributor(t.Context(), spy, name != "config_lock", roleFlag)
+					callErr = autoConfigureForkContributor(t.Context(), spy, strings.HasSuffix(name, "quiet"), roleFlag)
 				})
 				if callErr != nil {
 					t.Fatal(callErr)
