@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -311,8 +312,46 @@ func readInitHooksFile(t *testing.T, path string) []byte {
 	return data
 }
 
+func TestInitHooksPreservesManagedDirectoryAliases(t *testing.T) {
+	for _, managed := range []string{".beads/hooks", ".beads-hooks"} {
+		t.Run(managed, func(t *testing.T) {
+			selected, _, storage, common := newInitHooksFixture(t)
+			root := filepath.Dir(common)
+			source := filepath.Join(root, managed)
+			require.NoError(t, os.MkdirAll(source, 0755))
+			const content = "#!/bin/sh\necho existing managed-directory hook\n"
+			require.NoError(t, os.WriteFile(filepath.Join(source, "post-rewrite"), []byte(content), 0755))
+			alias := filepath.Join(t.TempDir(), "repository alias")
+			if err := os.Symlink(root, alias); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("directory symlink capability unavailable: %v", err)
+				}
+				t.Fatal(err)
+			}
+			initExcludeGit(t, selected, "config", "--local", "core.hooksPath", filepath.Join(alias, managed))
+			fs, _, err := withInitHooks(nil, selected, storage)
+			require.NoError(t, err)
+			require.NoError(t, fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true}))
+			_, err = os.Stat(filepath.Join(storage, "hooks", "post-rewrite"))
+			require.ErrorIs(t, err, os.ErrNotExist, "an existing managed hooks directory must not be copied through an alias")
+			require.Equal(t, content, string(readInitHooksFile(t, filepath.Join(source, "post-rewrite"))))
+		})
+	}
+}
+
+func TestInitHooksRefusesSharedMode(t *testing.T) {
+	selected, _, storage, common := newInitHooksFixture(t)
+	fs, _, err := withInitHooks(nil, selected, storage)
+	require.NoError(t, err)
+	require.ErrorContains(t, fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, Shared: true}), "shared hooks mode")
+	for _, path := range []string{filepath.Join(storage, "hooks"), filepath.Join(filepath.Dir(common), ".beads-hooks")} {
+		_, err := os.Stat(path)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+}
+
 func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
-	for _, name := range []string{"foreign", "global", "private", "shared", "config_lock"} {
+	for _, name := range []string{"foreign", "global", "private", "config_lock"} {
 		t.Run(name, func(t *testing.T) {
 			selected, decoy, storage, common := newInitHooksFixture(t)
 			current := t.TempDir()
@@ -353,12 +392,8 @@ func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
 			t.Setenv("GIT_CONFIG_VALUE_0", filepath.Join(decoy, "wrong hooks"))
 			env := os.Environ()
 			destination := filepath.Join(storage, "hooks")
-			shared := name == "shared"
-			if shared {
-				destination = filepath.Join(filepath.Dir(common), ".beads-hooks")
-			}
 			for range 2 {
-				err := fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, Shared: shared, BeadsHooks: !shared})
+				err := fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true})
 				if name == "config_lock" {
 					require.ErrorContains(t, err, "failed to configure git hooks path")
 				} else {

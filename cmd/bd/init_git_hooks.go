@@ -271,12 +271,13 @@ func buildPostMergeHook(chainHooks bool, existingHooks []hookInfo) string {
 	return "#!/bin/sh\n" + section
 }
 
+// jjHookNames is the shared inventory for standalone and selected init adapters.
+var jjHookNames = []string{"pre-commit", "post-merge"}
+
 // installJJHooks installs marker-managed hooks for colocated jujutsu+git repos.
 // This path intentionally avoids .old sidecar chaining and uses the same section
 // injection behavior as regular hook installs.
 func installJJHooks() error {
-	// jj only needs pre-commit and post-merge hooks
-	jjHookNames := []string{"pre-commit", "post-merge"}
 	return installHooksWithOptions(jjHookNames, false, false, false, false)
 }
 
@@ -358,7 +359,7 @@ func (c *initHooksContext) needsUpdate() bool {
 	if c == nil {
 		return hooksNeedUpdate()
 	}
-	return hookStatusesNeedUpdate(checkGitHooksAt(c.paths.HooksDir, nil))
+	return hookStatusesNeedUpdate(checkGitHooksAt(c.paths.HooksDir))
 }
 
 func (c *initHooksContext) configureHooksPath(hooksDir string) error {
