@@ -136,6 +136,7 @@ func TestGetGitHooksDirTildeExpansion(t *testing.T) {
 }
 
 func TestResolveHooksContext(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
 	// Own both Git and Go home resolution; don't borrow user/global settings.
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
