@@ -325,12 +325,14 @@ func printJJAliasInstructions() {
 
 // initHooksContext keeps the selected Git project separate from Beads storage.
 // Repository selection and both environments are captured once; only the
-// effective HooksDir is refreshed for status. Tracking fallback supplies refusal
+// effective HooksDir is refreshed for subsequent status/reuse; captured repository
+// and common-config authority stay unchanged. Tracking fallback supplies refusal
 // evidence only, never a destination for writing hooks or configuration.
 type initHooksContext struct {
 	workDir, beadsDir string
 	paths             git.HooksContext
 	env, inheritedEnv []string
+	quiet             bool
 }
 
 func resolveInitHooksContext(workDir, beadsDir string) (*initHooksContext, error) {
@@ -374,16 +376,18 @@ func (c *initHooksContext) configureHooksPath(hooksDir string) error {
 }
 
 // reportHooksActivation observes activation after the common-config write.
-// A private worktree override remains owned by the user, even when it keeps
-// the newly installed hooks inactive. No post-write observation implies rollback.
+// Higher-precedence configuration can keep the new hooks inactive. Its origin
+// is not inferred here, and no post-write observation implies rollback.
 func (c *initHooksContext) reportHooksActivation(hooksDir string) {
 	paths, err := git.ResolveHooksContext(c.workDir, c.env)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: hooks were installed at %s, but their activation could not be verified: %v\n", hooksDir, err)
+		if !c.quiet {
+			fmt.Fprintf(os.Stderr, "Warning: hooks were installed at %s, but their activation could not be verified: %v\n", hooksDir, err)
+		}
 		return
 	}
 	c.paths.HooksDir = paths.HooksDir
-	if !utils.PathsEqual(paths.HooksDir, hooksDir) {
-		fmt.Fprintf(os.Stderr, "Warning: hooks installed at %s are inactive in this worktree; effective core.hooksPath selects %s. Private worktree config was preserved.\n", hooksDir, paths.HooksDir)
+	if !c.quiet && !utils.PathsEqual(paths.HooksDir, hooksDir) {
+		fmt.Fprintf(os.Stderr, "Warning: hooks installed at %s are inactive in this worktree; effective core.hooksPath selects %s.\n", hooksDir, paths.HooksDir)
 	}
 }

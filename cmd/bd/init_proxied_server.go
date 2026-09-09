@@ -591,6 +591,9 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		case isColocated || isRepo:
 			// Resolve only an eligible Git branch, never skip/pure-JJ/nonrepo paths.
 			hookFS, hooks, err := withInitHooks(t.fsUseCase, t.workDir, t.beadsDir)
+			if hooks != nil {
+				hooks.quiet = in.quiet
+			}
 			if err != nil {
 				if !in.quiet {
 					fmt.Fprintf(os.Stderr, "\n%s Failed to resolve git hooks: %v\n", ui.RenderWarn("⚠"), err)

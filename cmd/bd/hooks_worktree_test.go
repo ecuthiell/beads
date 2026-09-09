@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	storagefs "github.com/steveyegge/beads/internal/storage/fs"
+	storagegit "github.com/steveyegge/beads/internal/storage/git"
 	"github.com/stretchr/testify/require"
 )
 
@@ -351,7 +354,7 @@ func TestInitHooksRefusesSharedMode(t *testing.T) {
 }
 
 func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
-	for _, name := range []string{"foreign", "global", "private", "config_lock"} {
+	for _, name := range []string{"foreign", "global", "private", "quiet", "config_lock"} {
 		t.Run(name, func(t *testing.T) {
 			selected, decoy, storage, common := newInitHooksFixture(t)
 			current := t.TempDir()
@@ -381,6 +384,7 @@ func TestInitHooksContextPreservesSelectedPaths(t *testing.T) {
 			fs, hooks, err := withInitHooks(nil, selected, storage)
 			require.NoError(t, err)
 			require.False(t, hooks.installed())
+			hooks.quiet = name == "quiet"
 			if name == "config_lock" {
 				require.NoError(t, os.WriteFile(filepath.Join(common, "config.lock"), []byte("owned lock"), 0600))
 				preserved[filepath.Join(common, "config")] = readInitHooksFile(t, filepath.Join(common, "config"))
@@ -492,4 +496,43 @@ func TestInitHooksActivationObservationFailure(t *testing.T) {
 	require.Equal(t, before, hooks.paths, "failed observation must preserve captured selection and prior status")
 	require.Equal(t, installed, readInitHooksFile(t, filepath.Join(destination, "pre-commit")))
 	require.Equal(t, invalidConfig, string(readInitHooksFile(t, configPath)), "observation must not rewrite config")
+}
+
+func TestProxiedInitHooksActivationHonorsQuiet(t *testing.T) {
+	for _, quiet := range []bool{false, true} {
+		name := "noisy"
+		if quiet {
+			name = "quiet"
+		}
+		t.Run(name, func(t *testing.T) {
+			selected, decoy, storage, common := newInitHooksFixture(t)
+			private := t.TempDir()
+			initExcludeGit(t, selected, "config", "extensions.worktreeConfig", "true")
+			initExcludeGit(t, selected, "config", "--worktree", "core.hooksPath", private)
+			privateConfig := filepath.Join(initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir"), "config.worktree")
+			before := readInitHooksFile(t, privateConfig)
+			decoyConfig := readInitHooksFile(t, filepath.Join(decoy, ".git", "config"))
+			fs := storagefs.NewFileSystemProvider(selected, newBeadsDirTemplates(), newInitFileSystemAdapters(selected)).BeadsDirFSUseCase()
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("setup-exclude", true, "")
+			in := initProxiedServerInput{quiet: quiet, skipAgents: true, nonInteractive: true}
+			stderr := captureStderr(t, func() {
+				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{workDir: selected, beadsDir: storage, remoteURL: "file:///unused-hooks-fixture-remote", fsUseCase: fs, gitUC: storagegit.NewGitProvider(selected).GitUseCase()}))
+			})
+			destination := filepath.Join(storage, "hooks")
+			if quiet {
+				require.Empty(t, stderr)
+			} else {
+				require.Contains(t, stderr, "are inactive in this worktree")
+				require.Contains(t, stderr, destination)
+				require.Contains(t, stderr, private)
+				require.NotContains(t, stderr, "Private worktree")
+			}
+			require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
+			require.Equal(t, destination, initExcludeGit(t, selected, "config", "--file", filepath.Join(common, "config"), "--get", "core.hooksPath"))
+			require.Equal(t, before, readInitHooksFile(t, privateConfig))
+			require.Equal(t, decoyConfig, readInitHooksFile(t, filepath.Join(decoy, ".git", "config")))
+			require.Equal(t, private, initExcludeGit(t, selected, "config", "--get", "core.hooksPath"))
+		})
+	}
 }
