@@ -3400,6 +3400,9 @@ func resolveInitDoltMode(proxiedFlag, sharedFlag, serverFlag bool) string {
 // optional-add and nonfatal commit behavior of the embedded bootstrap.
 func commitEmbeddedInitArtifacts(workDir string, quiet bool) {
 	if initArtifactGitCommand(workDir, "rev-parse", "--git-dir").Run() != nil {
+		if !quiet {
+			fmt.Fprintln(os.Stderr, "Note: skipped bootstrap commit because Git could not resolve the selected repository.")
+		}
 		return
 	}
 	gitAddCmd := initArtifactGitCommand(workDir, "add", ".beads/")
