@@ -39,7 +39,7 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 		require.NoError(t, err, "fixture git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
 	}
-	for _, name := range []string{"ordinary", "decoy", "invalid", "inline", "missing", "nonrepo", "bare", "stealth", "explicit", "explicit_empty", "configured", "configured_stealth", "legacy", "canceled"} {
+	for _, name := range []string{"ordinary", "decoy", "invalid", "inline", "scp", "missing", "nonrepo", "bare", "stealth", "explicit", "explicit_empty", "configured", "configured_stealth", "legacy", "canceled"} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
@@ -50,8 +50,12 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 			global := filepath.Join(home, ".gitconfig")
 			require.NoError(t, os.WriteFile(global, []byte("[user]\n\tname = fixture\n"), 0600))
 			const selectedURL = "file:///selected-origin"
-			if name != "missing" {
-				runGit(t, target, "remote", "add", "origin", selectedURL)
+			if name != "missing" && name != "inline" {
+				origin := selectedURL
+				if name == "scp" {
+					origin = "git@github.com:fixture/selected.git"
+				}
+				runGit(t, target, "remote", "add", "origin", origin)
 			}
 			runGit(t, decoy, "remote", "add", "origin", "file:///decoy-origin")
 			selected := target
@@ -70,8 +74,10 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 			in := initProxiedServerInput{}
 			want := selectedURL
 			switch name {
-			case "missing", "nonrepo", "bare", "canceled":
+			case "inline", "missing", "nonrepo", "bare", "canceled":
 				want = ""
+			case "scp":
+				want = "git+ssh://git@github.com/fixture/selected.git"
 			case "stealth":
 				in.stealth, want = true, ""
 			case "explicit", "explicit_empty":
@@ -98,6 +104,11 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 					t.Setenv("GIT_CONFIG_COUNT", "1")
 					t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
 					t.Setenv("GIT_CONFIG_VALUE_0", "file:///inline-origin")
+					probe := exec.Command("git", "remote", "get-url", "origin")
+					probe.Dir = target // Prove this row distinguishes inherited inline config.
+					out, err := probe.CombinedOutput()
+					require.NoError(t, err, "%s", out)
+					require.Equal(t, "file:///inline-origin", strings.TrimSpace(string(out)))
 				} else {
 					t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
 					t.Setenv("GIT_WORK_TREE", decoy)
