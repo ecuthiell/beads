@@ -50,7 +50,7 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 			global := filepath.Join(home, ".gitconfig")
 			require.NoError(t, os.WriteFile(global, []byte("[user]\n\tname = fixture\n"), 0600))
 			const selectedURL = "file:///selected-origin"
-			if name != "missing" && name != "inline" {
+			if name != "missing" {
 				origin := selectedURL
 				if name == "scp" {
 					origin = "git@github.com:fixture/selected.git"
@@ -74,7 +74,7 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 			in := initProxiedServerInput{}
 			want := selectedURL
 			switch name {
-			case "inline", "missing", "nonrepo", "bare", "canceled":
+			case "missing", "nonrepo", "bare", "canceled":
 				want = ""
 			case "scp":
 				want = "git+ssh://git@github.com/fixture/selected.git"
@@ -102,8 +102,8 @@ func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 				t.Chdir(decoy)
 				if name == "inline" {
 					t.Setenv("GIT_CONFIG_COUNT", "1")
-					t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
-					t.Setenv("GIT_CONFIG_VALUE_0", "file:///inline-origin")
+					t.Setenv("GIT_CONFIG_KEY_0", "url.file:///inline-origin.insteadOf")
+					t.Setenv("GIT_CONFIG_VALUE_0", selectedURL)
 					probe := exec.Command("git", "remote", "get-url", "origin")
 					probe.Dir = target // Prove this row distinguishes inherited inline config.
 					out, err := probe.CombinedOutput()
