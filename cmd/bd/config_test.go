@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfigCommands(t *testing.T) {
@@ -407,6 +408,83 @@ func TestBeadsRoleCommandsIgnoreInheritedGitRouting(t *testing.T) {
 			t.Errorf("default global role output = %q", out)
 		}
 	})
+}
+
+func TestBeadsRoleWritesUseFreshCommonConfig(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	pinJSONOutput(t, false)
+	t.Cleanup(git.ResetCaches)
+	for _, kind := range []string{"linked", "bare", "separate", "nonrepo"} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+				t.Setenv(key, home)
+			}
+			run := func(dir string, args ...string) string {
+				cmd := exec.Command("git", args...)
+				cmd.Dir, cmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "fixture git %v: %s", args, out)
+				return strings.TrimSpace(string(out))
+			}
+			main, decoy, target := t.TempDir(), t.TempDir(), t.TempDir()
+			for _, dir := range []string{main, decoy} {
+				run(dir, "init", "--quiet")
+				run(dir, "config", "--local", "core.hooksPath", ".git/hooks")
+			}
+			switch kind {
+			case "linked":
+				run(main, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "seed")
+				run(main, "config", "extensions.worktreeConfig", "true")
+				run(main, "worktree", "add", "--detach", target)
+				run(target, "config", "--worktree", "beads.role", "private-role")
+			case "bare":
+				run(home, "init", "--bare", target)
+			case "separate":
+				run(home, "init", "--separate-git-dir", filepath.Join(home, "external git"), target)
+			}
+			t.Chdir(decoy)
+			git.ResetCaches()
+			cached, err := git.GetGitCommonDir()
+			require.NoError(t, err)
+			t.Chdir(target)
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_CONFIG", filepath.Join(decoy, ".git", "config"))
+			before, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
+			require.NoError(t, err)
+			for _, command := range []struct {
+				cmd  *cobra.Command
+				args []string
+			}{
+				{configSetCmd, []string{"beads.role", "contributor"}},
+				{configSetManyCmd, []string{"beads.role=maintainer", "beads.role=contributor"}},
+				{configUnsetCmd, []string{"beads.role"}},
+			} {
+				if kind == "nonrepo" {
+					captureStderr(t, func() { require.Error(t, command.cmd.RunE(command.cmd, command.args)) })
+					continue
+				}
+				captureStdout(t, func() error { return command.cmd.RunE(command.cmd, command.args) })
+				role := run(target, "config", "--local", "--list")
+				require.Equal(t, command.cmd != configUnsetCmd, strings.Contains(role, "beads.role=contributor"))
+				if kind == "linked" {
+					require.Equal(t, "private-role", run(target, "config", "--worktree", "--get", "beads.role"))
+				}
+			}
+			after, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			stillCached, err := git.GetGitCommonDir()
+			require.NoError(t, err)
+			require.Equal(t, cached, stillCached)
+		})
+	}
 }
 
 // TestIsValidRemoteURL tests the remote URL validation function
