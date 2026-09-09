@@ -19,7 +19,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/domain"
 	domaingit "github.com/steveyegge/beads/internal/storage/domain/git"
 	"github.com/steveyegge/beads/internal/storage/fs"
-	"github.com/steveyegge/beads/internal/storage/git"
 	"github.com/steveyegge/beads/internal/storage/uow"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/workapi"
@@ -104,7 +103,6 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 
 	fsProvider := fs.NewFileSystemProvider(cwd, newBeadsDirTemplates(), newFileSystemAdapters())
 	fsUseCase := fsProvider.BeadsDirFSUseCase()
-	gitUC := git.NewGitProvider(cwd).GitUseCase()
 
 	if in.stealth {
 		if err := fsUseCase.SetupStealthMode(ctx, !in.quiet); err != nil {
@@ -297,7 +295,6 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 		useLocalBeads: useLocalBeads,
 		remoteURL:     remoteURL,
 		fsUseCase:     fsUseCase,
-		gitUC:         gitUC,
 	})
 }
 
@@ -542,7 +539,7 @@ func (t runInitTailContext) isRoleGitRepo(ctx context.Context, fallback bool) bo
 func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initProxiedServerInput, t runInitTailContext) error {
 	gitUC := t.gitUC
 	if t.workDir != "" {
-		// Only the selected tail uses this scope; earlier bootstrap keeps its provider.
+		// Bootstrap and this selected tail use the same scrubbed Git scope.
 		gitUC = domain.NewGitUseCase(t.workDir, domaingit.NewInitGitRepository(t.workDir))
 	}
 	isRepo := gitUC.IsGitRepo(ctx)

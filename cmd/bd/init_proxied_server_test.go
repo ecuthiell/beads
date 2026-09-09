@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Serial: changes the process working directory and environment.
 func TestProxiedInitGitBootstrapUsesSelectedProject(t *testing.T) {
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)
