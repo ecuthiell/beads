@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 )
@@ -40,6 +39,12 @@ func loadGitContext(workDir string, env []string) gitContext {
 	output, err := cmd.Output()
 	if err != nil {
 		ctx.err = fmt.Errorf("not a git repository: %w", err)
+		if workDir != "" {
+			ctx.err = fmt.Errorf("resolve Git working tree: %w", err)
+			if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+				ctx.err = fmt.Errorf("%w: %s", ctx.err, strings.TrimSpace(string(exit.Stderr)))
+			}
+		}
 		return ctx
 	}
 
@@ -100,10 +105,14 @@ type HooksContext struct {
 }
 
 // ResolveHooksContext reads fresh paths without changing the legacy cache.
-// workDir must be nonempty and is anchored once; bare/non-repositories error.
-// Nil env inherits; a nonnil env is copied and supplied, including an empty one.
+// workDir must be nonempty and is anchored and symlink/case-normalized once;
+// bare/non-repositories error. Configured absolute hook paths retain their spelling.
+// Nil env inherits; a nonnil env is supplied unchanged, including an empty one.
+// The call neither mutates nor retains env; callers must not change it during the call.
 // Routing variables are honored, not filtered. Tilde expansion uses the Go
 // process's home directory, independently of HOME supplied to child Git.
+// A sandbox HOME therefore does not redirect a configured ~/ hook path: callers
+// that install there would still write under the Go process's home directory.
 func ResolveHooksContext(workDir string, env []string) (HooksContext, error) {
 	if workDir == "" {
 		return HooksContext{}, fmt.Errorf("hooks context requires a working directory")
@@ -112,7 +121,13 @@ func ResolveHooksContext(workDir string, env []string) (HooksContext, error) {
 	if err != nil {
 		return HooksContext{}, err
 	}
-	env = slices.Clone(env)
+	workDir, err = filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return HooksContext{}, fmt.Errorf("resolve hooks working directory: %w", err)
+	}
+	if canonical := canonicalizeCase(workDir); canonical != "" {
+		workDir = canonical
+	}
 	ctx := loadGitContext(workDir, env)
 	if ctx.err != nil {
 		return HooksContext{}, ctx.err
