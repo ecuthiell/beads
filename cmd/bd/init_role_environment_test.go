@@ -204,11 +204,28 @@ func TestAutoConfigureForkContributorIgnoresInheritedGitRouting(t *testing.T) {
 			// Repeating the real call proves configured/idempotent and flag precedence.
 			for call := range 2 {
 				var callErr error
+				stdoutFile, err := os.CreateTemp(t.TempDir(), "stdout")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stdoutFile.Close()
 				stderr := captureStderr(t, func() {
+					// captureStderr holds the shared stdio mutex; do not nest captureStdout.
+					old := os.Stdout
+					os.Stdout = stdoutFile
+					defer func() { os.Stdout = old }()
 					callErr = autoConfigureForkContributor(t.Context(), spy, strings.HasSuffix(name, "quiet"), roleFlag)
 				})
+				stdout, err := os.ReadFile(stdoutFile.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
 				if callErr != nil {
 					t.Fatal(callErr)
+				}
+				wantBanner := (name == "configure" || name == "config_lock") && call == 0
+				if got := strings.Contains(string(stdout), "Fork detected — configuring contributor routing\n"); got != wantBanner {
+					t.Errorf("call %d: stdout = %q, want setup banner %v", call+1, stdout, wantBanner)
 				}
 				wantWarning := name == "config_lock" && call == 0
 				if got := strings.Contains(stderr, "Warning: failed to set beads.role=contributor:"); got != wantWarning {
