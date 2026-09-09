@@ -68,9 +68,9 @@ type initHooksFileSystem struct {
 }
 
 func (fs initHooksFileSystem) InstallGitHooks(_ context.Context, p domain.HooksInstallParams) error {
-	return installHooksWithContext(p.HookNames, p.Shared, p.BeadsHooks, fs.hooks)
+	return installHooksWithContext(p.HookNames, p.Force, p.Shared, p.Chain, p.BeadsHooks, fs.hooks)
 }
 
 func (fs initHooksFileSystem) InstallJJHooks(_ context.Context) error {
-	return installHooksWithContext([]string{"pre-commit", "post-merge"}, false, false, fs.hooks)
+	return installHooksWithContext(jjHookNames, false, false, false, false, fs.hooks)
 }

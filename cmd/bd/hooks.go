@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // managedHookNames lists the git hooks managed by beads.
@@ -509,21 +510,21 @@ type HookStatus struct {
 
 // CheckGitHooks checks the status of bd git hooks in .git/hooks/
 func CheckGitHooks() []HookStatus {
-	return checkGitHooksAt(git.GetGitHooksDir())
-}
-
-func checkGitHooksAt(hooksDir string, err error) []HookStatus {
-	hooks := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
-	statuses := make([]HookStatus, 0, len(hooks))
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		// Not a git repo - return all hooks as not installed
-		for _, hookName := range hooks {
+		statuses := make([]HookStatus, 0, len(managedHookNames))
+		for _, hookName := range managedHookNames {
 			statuses = append(statuses, HookStatus{Name: hookName, Installed: false})
 		}
 		return statuses
 	}
+	return checkGitHooksAt(hooksDir)
+}
 
-	for _, hookName := range hooks {
+func checkGitHooksAt(hooksDir string) []HookStatus {
+	statuses := make([]HookStatus, 0, len(managedHookNames))
+	for _, hookName := range managedHookNames {
 		status := HookStatus{
 			Name: hookName,
 		}
@@ -886,12 +887,15 @@ func isGitTrackedFileWithEnv(path string, clean, inherited []string) bool {
 	return false
 }
 
-//nolint:unparam // force and chain kept for CLI flag compatibility; section markers make them no-ops
 func installHooksWithOptions(hookNames []string, force bool, shared bool, chain bool, beadsHooks bool) error {
-	return installHooksWithContext(hookNames, shared, beadsHooks, nil)
+	return installHooksWithContext(hookNames, force, shared, chain, beadsHooks, nil)
 }
 
-func installHooksWithContext(hookNames []string, shared, beadsHooks bool, selected *initHooksContext) error {
+//nolint:unparam // force and chain kept for CLI flag compatibility; section markers make them no-ops
+func installHooksWithContext(hookNames []string, force, shared, chain, beadsHooks bool, selected *initHooksContext) error {
+	if selected != nil && shared {
+		return fmt.Errorf("shared hooks mode is not supported by selected init")
+	}
 	var hooksDir string
 	if selected != nil {
 		hooksDir = selected.paths.HooksDir
@@ -900,8 +904,6 @@ func installHooksWithContext(hookNames []string, shared, beadsHooks bool, select
 				return fmt.Errorf("%s", activeWorkspaceNotFoundError())
 			}
 			hooksDir = filepath.Join(selected.beadsDir, "hooks")
-		} else if shared {
-			hooksDir = filepath.Join(selected.paths.MainRepoRoot, ".beads-hooks")
 		}
 	} else if beadsHooks {
 		// Use .beads/hooks/ directory (preferred for Dolt backend)
@@ -1020,7 +1022,7 @@ func installHooksWithContext(hookNames []string, shared, beadsHooks bool, select
 	}
 
 	// Configure git to use the hooks directory after writing, as in ordinary installs.
-	if selected != nil && (beadsHooks || shared) {
+	if selected != nil && beadsHooks {
 		if err := selected.configureHooksPath(hooksDir); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)
 		}
@@ -1069,7 +1071,7 @@ func preservePreexistingHooksAt(targetDir, currentDir string, mainRoot func() st
 	}
 
 	// If the current dir is already our target, this is a re-install — skip.
-	if absTarget == absCurrent {
+	if utils.PathsEqual(absTarget, absCurrent) {
 		return
 	}
 
@@ -1078,7 +1080,7 @@ func preservePreexistingHooksAt(targetDir, currentDir string, mainRoot func() st
 	if repoRoot != "" {
 		absBeadsHooks, _ := filepath.Abs(filepath.Join(repoRoot, ".beads", "hooks"))
 		absSharedHooks, _ := filepath.Abs(filepath.Join(repoRoot, ".beads-hooks"))
-		if absCurrent == absBeadsHooks || absCurrent == absSharedHooks {
+		if utils.PathsEqual(absCurrent, absBeadsHooks) || utils.PathsEqual(absCurrent, absSharedHooks) {
 			return
 		}
 	}

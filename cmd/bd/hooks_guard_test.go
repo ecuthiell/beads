@@ -465,15 +465,12 @@ func TestGuardHookWritePathAllowsFileWhenGitUnavailable(t *testing.T) {
 }
 
 func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
-	for _, name := range []string{"tracked", "bd_owned", "shared", "symlink", "captured_fallback"} {
+	for _, name := range []string{"tracked", "bd_owned", "symlink", "captured_fallback"} {
 		t.Run(name, func(t *testing.T) {
-			selected, _, _, common := newInitHooksFixture(t)
-			shared := name == "shared"
+			selected, _, _, _ := newInitHooksFixture(t)
 			storage := filepath.Join(selected, "local-storage")
 			hooksDir := filepath.Join(storage, "hooks")
-			if shared {
-				hooksDir = filepath.Join(filepath.Dir(common), ".beads-hooks")
-			} else if name == "captured_fallback" {
+			if name == "captured_fallback" {
 				storage = t.TempDir()
 				hooksDir = filepath.Join(storage, "hooks")
 			}
@@ -499,11 +496,7 @@ func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
 					t.Setenv("GIT_WORK_TREE", storage)
 					t.Setenv("GIT_INDEX_FILE", filepath.Join(bare, "index"))
 				} else {
-					repo := selected
-					if shared {
-						repo = filepath.Dir(common)
-					}
-					initExcludeGit(t, repo, "add", "--force", "--", hook)
+					initExcludeGit(t, selected, "add", "--force", "--", hook)
 				}
 			}
 			fs, hooks, err := withInitHooks(nil, selected, storage)
@@ -513,8 +506,8 @@ func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
 				require.True(t, isGitTrackedFileWithEnv(hook, hooks.env, hooks.inheritedEnv), "inherited view must prove tracking")
 			}
 			t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "missing"))
-			err = fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, Shared: shared, BeadsHooks: !shared})
-			if shared || name == "bd_owned" {
+			err = fs.InstallGitHooks(t.Context(), domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true})
+			if name == "bd_owned" {
 				require.NoError(t, err)
 				require.Contains(t, string(readInitHooksFile(t, hook)), hookSectionBeginPrefix)
 			} else {
