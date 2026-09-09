@@ -2468,13 +2468,14 @@ func TestSelectedBeadsCanonicalizerIgnoresInheritedRouting(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		env   map[string]string
-		query string
+		query []string
 	}{
-		{"decoy", map[string]string{"GIT_DIR": decoyGitDir}, "--abbrev-ref"},
-		{"invalid", map[string]string{"GIT_DIR": filepath.Join(t.TempDir(), "missing git dir")}, "--abbrev-ref"},
-		{"work_tree_only", map[string]string{"GIT_WORK_TREE": filepath.Dir(decoy)}, "--show-toplevel"},
-		{"common_dir_only", map[string]string{"GIT_COMMON_DIR": decoyCommonDir}, "--git-common-dir"},
-		{"inline_config", map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.bare", "GIT_CONFIG_VALUE_0": "true"}, "--is-bare-repository"},
+		{"decoy", map[string]string{"GIT_DIR": decoyGitDir}, []string{"rev-parse", "--abbrev-ref", "HEAD"}},
+		{"invalid", map[string]string{"GIT_DIR": filepath.Join(t.TempDir(), "missing git dir")}, []string{"rev-parse", "--abbrev-ref", "HEAD"}},
+		{"work_tree_only", map[string]string{"GIT_WORK_TREE": filepath.Dir(decoy)}, []string{"rev-parse", "--show-toplevel"}},
+		{"common_dir_only", map[string]string{"GIT_COMMON_DIR": decoyCommonDir}, []string{"rev-parse", "--git-common-dir"}},
+		// Linked worktrees stay non-bare regardless of core.bare; observe the config itself.
+		{"inline_config", map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.bare", "GIT_CONFIG_VALUE_0": "false"}, []string{"config", "--get", "core.bare"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for key, value := range tc.env {
@@ -2482,13 +2483,9 @@ func TestSelectedBeadsCanonicalizerIgnoresInheritedRouting(t *testing.T) {
 			}
 			t.Setenv("BEADS_DIR", detached)
 			t.Setenv("BEADS_DB", "")
-			args := []string{"rev-parse", tc.query}
-			if tc.query == "--abbrev-ref" {
-				args = append(args, "HEAD")
-			}
 			// Each vector changes the generic query; selected queries keep their own context.
-			inherited, inheritedErr := gitOutput(filepath.Dir(detached), args...)
-			selected, err := selectedBeadsGitOutput(filepath.Dir(detached), args...)
+			inherited, inheritedErr := gitOutput(filepath.Dir(detached), tc.query...)
+			selected, err := selectedBeadsGitOutput(filepath.Dir(detached), tc.query...)
 			if err != nil || (tc.name == "invalid" && inheritedErr == nil) ||
 				(tc.name != "invalid" && (inheritedErr != nil || inherited == selected)) {
 				t.Fatalf("routing precondition: inherited=%q (%v), selected=%q (%v)", inherited, inheritedErr, selected, err)
