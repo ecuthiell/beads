@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	storagegit "github.com/steveyegge/beads/internal/storage/git"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +88,7 @@ func TestProxiedInitGitBootstrapUsesSelectedProject(t *testing.T) {
 			require.Equal(t, envBefore, os.Environ())
 			cwd, cwdErr := os.Getwd()
 			require.NoError(t, cwdErr)
-			require.Equal(t, decoy, cwd)
+			require.True(t, utils.PathsEqual(decoy, cwd), "process cwd = %q, want %q", cwd, decoy)
 			if name == "blocked" || name == "canceled" {
 				require.Error(t, err)
 				require.Equal(t, domain.EnsureGitRepoResult{}, result)
@@ -106,7 +107,8 @@ func TestProxiedInitGitBootstrapUsesSelectedProject(t *testing.T) {
 				if name == "bare" {
 					gitDir = selected
 				}
-				require.Equal(t, filepath.ToSlash(gitDir), filepath.ToSlash(runGit(t, selected, "rev-parse", "--absolute-git-dir")))
+				gotGitDir := runGit(t, selected, "rev-parse", "--absolute-git-dir")
+				require.True(t, utils.PathsEqual(gitDir, gotGitDir), "Git directory = %q, want %q", gotGitDir, gitDir)
 			}
 			for path, data := range before {
 				after, readErr := os.ReadFile(path)
