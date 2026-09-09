@@ -89,8 +89,9 @@ func ScrubRoutingForOS(env []string, goos string) []string {
 	return cleaned
 }
 
-// IsRoutingKeyForOS stays conservative because a key alone cannot distinguish
-// config suppression from a custom file that can redirect selected operations.
+// isConfigSuppression recognizes controls that disable config sources.
+// IsRoutingKeyForOS stays conservative: a key alone cannot distinguish null
+// suppression from a custom file that can redirect selected operations.
 func isConfigSuppression(entry, goos string) bool {
 	key := execenv.KeyIdentityForOS(EntryKey(entry), goos)
 	_, value, assigned := strings.Cut(entry, "=")

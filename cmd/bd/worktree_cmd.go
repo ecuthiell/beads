@@ -671,9 +671,9 @@ func scrubWorktreeGitRoutingEnv(env []string) []string {
 }
 
 // scrubWorktreeGitRoutingEnvForOS removes inherited Git repository, index,
-// object, namespace, executable, template, and config routing. It deliberately
-// preserves non-routing controls such as GIT_OPTIONAL_LOCKS; the removal runner
-// applies its stricter policy separately.
+// object, namespace, executable, template, and custom config routing. It keeps
+// explicit null config suppression, GIT_CONFIG_NOSYSTEM and non-routing controls
+// such as GIT_OPTIONAL_LOCKS; the removal runner applies its stricter policy separately.
 func scrubWorktreeGitRoutingEnvForOS(env []string, goos string) []string {
 	return gitenv.ScrubRoutingForOS(env, goos)
 }
