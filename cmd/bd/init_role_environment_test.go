@@ -159,7 +159,7 @@ func (s *initRoleConfigSpy) SetConfig(_ context.Context, key, value string) erro
 }
 
 func TestAutoConfigureForkContributorIgnoresInheritedGitRouting(t *testing.T) {
-	for _, name := range []string{"configure", "configured", "maintainer", "not_fork"} {
+	for _, name := range []string{"configure", "configured", "maintainer", "not_fork", "config_lock", "config_lock_quiet"} {
 		t.Run(name, func(t *testing.T) {
 			target, decoy, home := newInitRoleFixture(t)
 			if name != "not_fork" {
@@ -195,14 +195,46 @@ func TestAutoConfigureForkContributorIgnoresInheritedGitRouting(t *testing.T) {
 			}
 			var wantWrites [][2]string
 			wantRole := "maintainer"
-			if name == "configure" {
-				wantRole = "contributor"
+			if name == "configure" || strings.HasPrefix(name, "config_lock") {
 				wantWrites = [][2]string{{"routing.mode", "auto"}, {"routing.contributor", planning}, {"sync.remote", "upstream"}}
+				if name == "configure" {
+					wantRole = "contributor"
+				} else if err := os.WriteFile(filepath.Join(target, ".git", "config.lock"), []byte("owned lock"), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			// Repeating the real call proves configured/idempotent and flag precedence.
-			for range 2 {
-				if err := autoConfigureForkContributor(t.Context(), spy, true, roleFlag); err != nil {
+			for call := range 2 {
+				var callErr error
+				stdoutFile, err := os.CreateTemp(t.TempDir(), "stdout")
+				if err != nil {
 					t.Fatal(err)
+				}
+				defer stdoutFile.Close()
+				stderr := captureStderr(t, func() {
+					// captureStderr holds the shared stdio mutex; do not nest captureStdout.
+					old := os.Stdout
+					os.Stdout = stdoutFile
+					defer func() { os.Stdout = old }()
+					callErr = autoConfigureForkContributor(t.Context(), spy, strings.HasSuffix(name, "quiet"), roleFlag)
+				})
+				stdout, err := os.ReadFile(stdoutFile.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if callErr != nil {
+					t.Fatal(callErr)
+				}
+				wantBanner := (name == "configure" || name == "config_lock") && call == 0
+				if got := strings.Contains(string(stdout), "Fork detected — configuring contributor routing\n"); got != wantBanner {
+					t.Errorf("call %d: stdout = %q, want setup banner %v", call+1, stdout, wantBanner)
+				}
+				wantWarning := name == "config_lock" && call == 0
+				if got := strings.Contains(stderr, "Warning: failed to set beads.role=contributor:"); got != wantWarning {
+					t.Errorf("call %d: role warning = %q, want warning %v", call+1, stderr, wantWarning)
+				}
+				if !wantWarning && stderr != "" {
+					t.Errorf("call %d: unexpected stderr %q", call+1, stderr)
 				}
 				if !reflect.DeepEqual(spy.writes, wantWrites) {
 					t.Errorf("configuration writes = %v, want %v", spy.writes, wantWrites)
@@ -467,6 +499,7 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 		want, inherited bool
 	}{
 		{"ordinary", true, true},
+		{"canceled", false, true},
 		{"invalid_routing", true, false},
 		{"bare", true, true},
 		{"nested", true, true},
@@ -502,7 +535,12 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 			if got := isGitRepo(); got != tc.inherited {
 				t.Fatalf("inherited repository precondition = %v, want %v", got, tc.inherited)
 			}
-			if got := isInitRoleGitRepo(); got != tc.want {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.name == "canceled" {
+				cancel()
+			}
+			if got := isInitRoleGitRepo(ctx); got != tc.want {
 				t.Errorf("role repository probe = %v, want %v", got, tc.want)
 			}
 		})

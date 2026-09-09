@@ -1833,7 +1833,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// - Interactive terminal (stdin is TTY) and not --non-interactive
 		// - No explicit --contributor or --team flag provided
 		// - No explicit --role flag provided
-		if isInitRoleGitRepo() && !contributor && !team && roleFlag == "" && !nonInteractive && shouldPromptForRole() {
+		if isInitRoleGitRepo(ctx) && !contributor && !team && roleFlag == "" && !nonInteractive && shouldPromptForRole() {
 			promptedContributor, err := promptContributorMode()
 			if err != nil {
 				if isCanceled(err) {
@@ -1848,7 +1848,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			} else if promptedContributor {
 				contributor = true // Triggers contributor wizard below
 			}
-		} else if isInitRoleGitRepo() && !contributor && !team {
+		} else if isInitRoleGitRepo(ctx) && !contributor && !team {
 			// If prompt was skipped (non-interactive or CI environment),
 			// ensure beads.role is set to avoid "not configured" warning
 			// during diagnostics. Use --role flag if provided, otherwise default.
@@ -1884,7 +1884,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 
 			// Contributor setup must also pin role detection to contributor.
 			// Without this, SSH remotes can be inferred as maintainer and bypass routing.
-			if isInitRoleGitRepo() {
+			if isInitRoleGitRepo(ctx) {
 				if err := setBeadsRole("contributor"); err != nil && !quiet {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set beads.role=contributor: %v\n", err)
 				}
@@ -1910,7 +1910,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// Earlier code paths may skip role-setting when BEADS_DIR is set,
 		// promptContributorMode fails, or edge-case flag combinations are used.
 		// This guarantees every init leaves a usable role-configured state.
-		if isInitRoleGitRepo() {
+		if isInitRoleGitRepo(ctx) {
 			if _, hasRole := getBeadsRole(); !hasRole {
 				fallbackRole := "maintainer"
 				if roleFlag != "" {
@@ -1925,7 +1925,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// Auto-configure contributor routing for fork repos (bd-umbf Child 1).
 		// Non-interactive, idempotent; only fires when upstream remote detected
 		// and routing.contributor is not already set.
-		if !contributor && isInitRoleGitRepo() {
+		// This gate also enables planning-repository creation and config.yaml updates.
+		if !contributor && isInitRoleGitRepo(ctx) {
 			if err := autoConfigureForkContributor(ctx, store, quiet || nonInteractive, roleFlag); err != nil && !quiet {
 				fmt.Fprintf(os.Stderr, "Warning: failed to auto-configure fork contributor routing: %v\n", err)
 			}
@@ -2869,8 +2870,10 @@ func shouldPromptForRole() bool {
 }
 
 // isInitRoleGitRepo uses the same CWD and routing policy as getBeadsRole/setBeadsRole.
-func isInitRoleGitRepo() bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+func isInitRoleGitRepo(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
 	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	return cmd.Run() == nil
 }
