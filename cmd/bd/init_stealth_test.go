@@ -667,7 +667,7 @@ func TestSetupGlobalGitIgnoreReadBoundaries(t *testing.T) {
 			if name != "write_only" {
 				suffix := "\n# Beads stealth mode: /test/project (added by bd init --stealth)\n/test/project/.beads/\n/test/project/.claude/settings.local.json\n"
 				if name == "readable" {
-					suffix = strings.ReplaceAll(suffix, "\n", "\r\n")
+					suffix = "\r\n# Beads stealth mode: /test/project (added by bd init --stealth)\r\n/test/project/.beads/\r\n/test/project/.claude/settings.local.json\r\n"
 				}
 				want += suffix
 			}
