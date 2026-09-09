@@ -467,6 +467,7 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 		want, inherited bool
 	}{
 		{"ordinary", true, true},
+		{"canceled", false, true},
 		{"invalid_routing", true, false},
 		{"bare", true, true},
 		{"nested", true, true},
@@ -502,7 +503,12 @@ func TestInitRoleGitRepoUsesSelectedDirectory(t *testing.T) {
 			if got := isGitRepo(); got != tc.inherited {
 				t.Fatalf("inherited repository precondition = %v, want %v", got, tc.inherited)
 			}
-			if got := isInitRoleGitRepo(); got != tc.want {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.name == "canceled" {
+				cancel()
+			}
+			if got := isInitRoleGitRepo(ctx); got != tc.want {
 				t.Errorf("role repository probe = %v, want %v", got, tc.want)
 			}
 		})
