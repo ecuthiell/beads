@@ -813,10 +813,10 @@ var hooksListCmd = &cobra.Command{
 //     allowTracked exempts shared installs (.beads-hooks/ is deliberately
 //     committed).
 func guardHookWritePath(hookPath string, allowTracked bool) error {
-	return guardHookWritePathWithProbe(hookPath, allowTracked, isGitTrackedFile)
+	return guardHookWritePathWithProbe(hookPath, allowTracked, gitTrackedFileContext)
 }
 
-func guardHookWritePathWithProbe(hookPath string, allowTracked bool, tracked func(string) bool) error {
+func guardHookWritePathWithProbe(hookPath string, allowTracked bool, tracked func(string) string) error {
 	fi, err := os.Lstat(hookPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -840,8 +840,8 @@ func guardHookWritePathWithProbe(hookPath string, allowTracked bool, tracked fun
 	// foreign tracked file dirties every clone that shares it (the wy-81fnur
 	// incident). A bd-owned hook the user chose to commit (e.g. a team-shared
 	// .beads/hooks/) is bd's to maintain — same policy as shared installs.
-	if tracked(hookPath) && !isBdOwnedHookFile(hookPath) {
-		return fmt.Errorf("%s is tracked by git and not a bd-managed hook; bd will not modify committed files it does not own\nUntrack it (git rm --cached) or move hooks to an untracked directory and re-run", hookPath)
+	if proof := tracked(hookPath); proof != "" && !isBdOwnedHookFile(hookPath) {
+		return fmt.Errorf("%s is tracked by git (%s) and not a bd-managed hook; bd will not modify committed files it does not own\nUntrack it (git rm --cached) or move hooks to an untracked directory and re-run", hookPath, proof)
 	}
 	return nil
 }
@@ -864,27 +864,40 @@ func isBdOwnedHookFile(path string) bool {
 // inherited Git context tracks path. If neither probe succeeds, errors count
 // as untracked — the guard only blocks writes it can prove are unsafe.
 func isGitTrackedFile(path string) bool {
+	return gitTrackedFileContext(path) != ""
+}
+
+func gitTrackedFileContext(path string) string {
 	inherited := os.Environ()
-	return isGitTrackedFileWithEnv(path, gitenv.ScrubRouting(inherited), inherited)
+	return gitTrackedFileContextWithEnv(path, gitenv.ScrubRouting(inherited), inherited)
 }
 
 func isGitTrackedFileWithEnv(path string, clean, inherited []string) bool {
+	return gitTrackedFileContextWithEnv(path, clean, inherited) != ""
+}
+
+// gitTrackedFileContextWithEnv returns a fixed label for the first successful
+// proof. It never includes inherited environment values or Git output.
+func gitTrackedFileContextWithEnv(path string, clean, inherited []string) string {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	// Check the containing repository first so inherited routing cannot hide a
 	// tracked hook. The fallback preserves bare work trees and trusted config.
 	// Either index reporting a tracked path is sufficient to refuse the write,
 	// even if the other view does not track it.
-	for _, env := range [][]string{clean, inherited} {
+	for index, env := range [][]string{clean, inherited} {
 		// #nosec G204 G702 - fixed "git" command; dir/base come from the hooks
 		// directory bd itself resolved, not user input
 		cmd := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", base)
 		cmd.Env = env
 		if cmd.Run() == nil {
-			return true
+			if index == 0 {
+				return "containing repository index"
+			}
+			return "inherited Git index"
 		}
 	}
-	return false
+	return ""
 }
 
 func installHooksWithOptions(hookNames []string, force bool, shared bool, chain bool, beadsHooks bool) error {
@@ -951,9 +964,11 @@ func installHooksWithContext(hookNames []string, force, shared, chain, beadsHook
 		}
 	}
 
-	tracked := isGitTrackedFile
+	tracked := gitTrackedFileContext
 	if selected != nil {
-		tracked = func(path string) bool { return isGitTrackedFileWithEnv(path, selected.env, selected.inheritedEnv) }
+		tracked = func(path string) string {
+			return gitTrackedFileContextWithEnv(path, selected.env, selected.inheritedEnv)
+		}
 	}
 	// Refuse the whole install up front if any target is unsafe to write —
 	// stopping midway through the loop would leave hooks half-installed.
