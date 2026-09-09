@@ -1105,8 +1105,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// safe to call even if already in a git repo.
 		// Skip when BEADS_DIR is explicitly set — the caller may be creating a
 		// standalone .beads/ directory outside any git repo.
-		if !isGitRepo() && !hasExplicitBeadsDir {
-			gitInitCmd := exec.Command("git", "init")
+		if !hasExplicitBeadsDir && initArtifactGitCommand(cwd, "rev-parse", "--git-dir").Run() != nil {
+			gitInitCmd := initArtifactGitCommand(cwd, "init")
 			if output, err := gitInitCmd.CombinedOutput(); err != nil {
 				return fmt.Errorf("failed to initialize git repository: %v\n%s", err, output)
 			}
