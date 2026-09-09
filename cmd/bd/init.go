@@ -1000,7 +1000,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// reinit has passed its held-gate confirmation. Remote safety above
 		// still evaluates the flag before this point.
 		if stealth {
-			if err := setupStealthMode(!quiet); err != nil {
+			if err := setupStealthModeAt(cwd, !quiet); err != nil {
 				return fmt.Errorf("setting up stealth mode: %v", err)
 			}
 
@@ -1966,7 +1966,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		setupExclude, _ := cmd.Flags().GetBool("setup-exclude")
 		if setupExclude {
 			// Manual flag - always configure
-			if err := setupForkExclude(!quiet); err != nil {
+			if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 			}
 		} else if !stealth && isGitRepo() {
@@ -1974,7 +1974,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if isFork, upstreamURL := detectForkSetup(); isFork {
 				if nonInteractive {
 					// In non-interactive mode, auto-configure fork exclude
-					if err := setupForkExclude(!quiet); err != nil {
+					if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 					}
 				} else {
@@ -1986,7 +1986,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 						}
 					}
 					if shouldExclude {
-						if err := setupForkExclude(!quiet); err != nil {
+						if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 						}
 					}

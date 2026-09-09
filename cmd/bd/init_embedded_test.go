@@ -1516,6 +1516,78 @@ func TestEmbeddedInitRoleRouting(t *testing.T) {
 	}
 }
 
+func TestEmbeddedInitSelectedExcludeRouting(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	bd := buildEmbeddedBD(t)
+	for _, name := range []string{"stealth_decoy", "stealth_invalid", "fork_decoy", "fork_invalid", "quiet_stealth", "quiet_fork"} {
+		t.Run(name, func(t *testing.T) {
+			target, decoy, home := newInitRoleFixture(t)
+			global := filepath.Join(home, ".gitconfig")
+			initRoleFixtureGit(t, target, "config", "--file", global, "user.name", "Exclude Fixture")
+			initRoleFixtureGit(t, target, "config", "--file", global, "user.email", "exclude@example.invalid")
+			exclude := filepath.Join(target, ".git", "info", "exclude")
+			const existing = "# owned project exclude\nkeep-me/\n"
+			if err := os.WriteFile(exclude, []byte(existing), 0600); err != nil {
+				t.Fatal(err)
+			}
+			preserveInitRoleInputs(t, filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "info", "exclude"), global)
+			missing := filepath.Join(home, "missing-inherited.git")
+			routing := filepath.Join(decoy, ".git")
+			if strings.HasSuffix(name, "invalid") {
+				routing = missing
+			}
+			t.Setenv("GIT_DIR", routing)
+			t.Setenv("GIT_WORK_TREE", decoy)
+			storage := filepath.Join(home, "separate storage", ".beads")
+			if err := os.MkdirAll(filepath.Dir(storage), 0750); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"init", "--prefix", "excludefixture", "--non-interactive", "--skip-hooks", "--skip-agents", "--role", "maintainer"}
+			stealth, quiet := strings.Contains(name, "stealth"), strings.HasPrefix(name, "quiet")
+			want := "**/RECOVERY*.md"
+			banner := "Added to .git/info/exclude:"
+			if stealth {
+				args = append(args, "--stealth")
+				want, banner = ".claude/settings.local.json", "Stealth mode configured successfully!"
+			} else {
+				args = append(args, "--setup-exclude")
+			}
+			if quiet {
+				args = append(args, "--quiet")
+			}
+			env := bdEnv(home)
+			for _, key := range []string{"BEADS_DIR", "BEADS_DB", "BD_DB", "BD_DOLT_HOST", "BD_DOLT_PORT"} {
+				env = envWithout(env, key)
+			}
+			cmd := exec.Command(bd, args...)
+			cmd.Dir, cmd.Env = target, append(env, "BEADS_DIR="+storage, "DOLT_ROOT_PATH="+home, "BD_DOLT_MODE=embedded", "BD_EVENTS_JOURNAL=false")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("embedded exclude init failed: %v\n%s", err, out)
+			}
+			data, err := os.ReadFile(exclude)
+			if err != nil || !strings.HasPrefix(string(data), existing) || !containsExactPattern(string(data), want) || !containsExactPattern(string(data), ".beads/") {
+				t.Fatalf("selected exclude = %q (%v); want original lines and %q", data, err, want)
+			}
+			if strings.Contains(string(out), banner) == quiet {
+				t.Errorf("exclude banner does not match quiet=%v: %s", quiet, out)
+			}
+			cfg, err := configfile.Load(storage)
+			if err != nil || cfg == nil || cfg.DoltMode != configfile.DoltModeEmbedded {
+				t.Fatalf("selected storage metadata = %+v, %v", cfg, err)
+			}
+			if info, err := os.Stat(filepath.Join(storage, "embeddeddolt", "excludefixture", ".dolt")); err != nil || !info.IsDir() {
+				t.Fatalf("embedded database missing from selected storage: %v", err)
+			}
+			if _, err := os.Stat(missing); !os.IsNotExist(err) {
+				t.Errorf("inherited Git directory was created: %v", err)
+			}
+		})
+	}
+}
+
 func TestEmbeddedInitArtifactRouting(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
