@@ -198,7 +198,7 @@ func TestResolveHooksContext(t *testing.T) {
 		got, err := ResolveHooksContext(dir, env)
 		want := HooksContext{HooksDir: hooks, CommonDir: filepath.Join(canonical(selected), ".git"), RepoRoot: canonical(repo), MainRepoRoot: canonical(selected)}
 		if err != nil || got != want {
-			t.Fatalf("selected context = %+v, %v; want %+v", got, err, want)
+			t.Errorf("selected context = %+v, %v; want %+v", got, err, want)
 		}
 		return got
 	}
@@ -303,8 +303,12 @@ func TestResolveHooksContext(t *testing.T) {
 	})
 	for name, dir := range map[string]string{"empty_workdir": "", "nonrepo": nonrepo, "bare": bare} {
 		t.Run(name, func(t *testing.T) {
-			if got, err := ResolveHooksContext(dir, cleanEnv); err == nil || got != (HooksContext{}) {
+			got, err := ResolveHooksContext(dir, cleanEnv)
+			if err == nil || got != (HooksContext{}) {
 				t.Fatalf("invalid context = %+v, %v", got, err)
+			}
+			if name == "bare" && !strings.Contains(err.Error(), "work tree") {
+				t.Errorf("bare repository error must retain Git's work-tree diagnostic: %v", err)
 			}
 		})
 	}
@@ -316,9 +320,6 @@ func TestResolveHooksContext(t *testing.T) {
 			}
 			t.Fatal(err)
 		}
-		got, err := ResolveHooksContext(link, cleanEnv)
-		if err != nil || got.RepoRoot != canonical(selected) {
-			t.Fatalf("symlink context = %+v, %v", got, err)
-		}
+		check(t, link, cleanEnv, selected, filepath.Join(canonical(selected), ".git", "hooks"))
 	})
 }
