@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -383,6 +384,9 @@ func preserveStandaloneHookInputs(t *testing.T, paths ...string) {
 
 func setStandaloneHookMode(t *testing.T, mode string) {
 	t.Helper()
+	oldJSON := jsonOutput
+	jsonOutput = false // These command fixtures assert the human-readable stderr contract.
+	t.Cleanup(func() { jsonOutput = oldJSON })
 	for _, flag := range []string{"force", "shared", "chain", "beads"} {
 		f := hooksInstallCmd.Flags().Lookup(flag)
 		old, changed := f.Value.String(), f.Changed
@@ -402,7 +406,7 @@ func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
 	for _, name := range []string{"regular", "linked", "private", "shared", "beads", "bare_external", "inline", "config_file", "config_lock"} {
 		t.Run(name, func(t *testing.T) {
 			selected, decoy, storage, common := newInitHooksFixture(t)
-			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "seed stale decoy cache")
+			require.True(t, utils.PathsEqual(decoy, git.GetRepoRoot()), "seed stale decoy cache")
 			cwd, mainRoot := decoy, filepath.Dir(common)
 			if name == "regular" {
 				selected = mainRoot
@@ -451,7 +455,7 @@ func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
 			require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
 			if name == "shared" || name == "beads" {
 				got := initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
-				require.Equal(t, filepath.Clean(destination), filepath.Clean(got))
+				require.True(t, utils.PathsEqual(destination, got), "selected hooks path = %q, want %q", got, destination)
 			}
 			if name == "config_lock" {
 				require.NoError(t, os.WriteFile(filepath.Join(common, "config.lock"), []byte("owned lock"), 0600))
@@ -471,9 +475,9 @@ func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
 			require.Equal(t, 1, exit.ExitCode(), "selected local role must be absent")
 			if name == "beads" {
 				got := initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
-				require.Equal(t, filepath.Clean(destination), filepath.Clean(got), "outside-storage predicate remains conservative")
+				require.True(t, utils.PathsEqual(destination, got), "outside-storage predicate remains conservative")
 			}
-			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "fresh commands must leave the legacy cache untouched")
+			require.True(t, utils.PathsEqual(decoy, git.GetRepoRoot()), "fresh commands must leave the legacy cache untouched")
 		})
 	}
 }

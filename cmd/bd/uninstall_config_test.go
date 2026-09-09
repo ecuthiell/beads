@@ -10,14 +10,18 @@ import (
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
+	"github.com/steveyegge/beads/internal/utils"
 	"github.com/stretchr/testify/require"
 )
 
 func TestStandaloneHooksAbsoluteFallbackHasNoConfigAuthority(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true // Reproduce the prior-command state observed in the full CI suite.
+	t.Cleanup(func() { jsonOutput = oldJSON })
 	for _, name := range []string{"nonrepo", "bare"} {
 		t.Run(name, func(t *testing.T) {
 			_, decoy, _, _ := newInitHooksFixture(t)
-			require.Equal(t, filepath.Clean(decoy), filepath.Clean(git.GetRepoRoot()), "seed stale config authority")
+			require.True(t, utils.PathsEqual(decoy, git.GetRepoRoot()), "seed stale config authority")
 			workDir, hooksDir := t.TempDir(), t.TempDir()
 			if name == "bare" {
 				initExcludeGit(t, workDir, "init", "--bare")
