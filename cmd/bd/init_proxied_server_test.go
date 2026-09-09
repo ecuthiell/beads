@@ -399,13 +399,12 @@ func TestProxiedInitTailRoleProbeUsesSelectedDirectory(t *testing.T) {
 			cmd.Flags().Bool("setup-exclude", false, "")
 			in := initProxiedServerInput{roleFlag: tc.flag, quiet: true, stealth: true, skipHooks: true, skipAgents: true}
 			require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{workDir: target, gitUC: gitUC}))
+			require.Zero(t, gitUC.roleReads, "selected tail must bypass the inherited role provider")
 			if tc.kind == "nonrepo" {
-				require.Zero(t, gitUC.roleReads, "non-repository entered the role branch")
 				entries, err := os.ReadDir(target)
 				require.NoError(t, err)
 				require.Empty(t, entries)
 			} else {
-				require.Equal(t, 1, gitUC.roleReads, "selected repository did not enter the role branch")
 				require.Equal(t, tc.want, runGit(t, target, "config", "--local", "--get", "beads.role"))
 			}
 			after, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))

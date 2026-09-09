@@ -398,11 +398,13 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 				for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 					t.Setenv(key, changedHome)
 				}
-				_, _, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.Error(t, err, "generic role reads still use the current caller environment")
+				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
+				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
+				require.False(t, found, "generic role reads still use the current caller environment")
+				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
 				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))
-				role, found, err := selected.GetConfig(t.Context(), "beads.role")
+				role, found, err = selected.GetConfig(t.Context(), "beads.role")
 				require.NoError(t, err)
 				require.True(t, found)
 				require.Equal(t, "contributor", role, "role reads and writes share the constructor's captured HOME")
