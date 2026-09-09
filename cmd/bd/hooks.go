@@ -1411,6 +1411,7 @@ func resetHooksPathIfBeadsManaged() error {
 	}
 
 	// These checks are defensive: repoRoot and commonDir share the cached Git context.
+	// The common-dir pin states intent: --local addresses the common config through either gitdir.
 	commonDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return fmt.Errorf("resolve Git common directory for role reset: %w", err)
