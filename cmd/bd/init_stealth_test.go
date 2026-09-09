@@ -585,23 +585,30 @@ func TestAddExcludePatternsCreatesMissingFile(t *testing.T) {
 }
 
 func TestCheckProjectExcludeStealthReadBoundaries(t *testing.T) {
-	for _, name := range []string{"directory", "missing", "patterns", "leak"} {
+	for _, name := range []string{"directory", "directory_clean", "missing", "dangling_symlink", "patterns", "leak"} {
 		t.Run(name, func(t *testing.T) {
 			dir := newGitRepo(t)
-			t.Chdir(dir)
 			excludePath := filepath.Join(dir, ".git", "info", "exclude")
 			if err := os.Remove(excludePath); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
 			preservedPath := excludePath
 			excludeContent := "user-rule\r\n" + strings.Join(doctor.ProjectGitignorePatterns, "\r\n") + "\r\n"
-			if name == "directory" {
+			if strings.HasPrefix(name, "directory") {
 				if err := os.Mkdir(excludePath, 0755); err != nil {
 					t.Fatal(err)
 				}
 				preservedPath = filepath.Join(excludePath, "owned")
 			}
-			if name != "missing" {
+			if name == "dangling_symlink" {
+				if err := os.Symlink(filepath.Join(dir, "missing-exclude-target"), excludePath); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skipf("symlink capability unavailable: %v", err)
+					}
+					t.Fatal(err)
+				}
+			}
+			if name != "missing" && name != "dangling_symlink" {
 				if err := os.WriteFile(preservedPath, []byte(excludeContent), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -616,14 +623,18 @@ func TestCheckProjectExcludeStealthReadBoundaries(t *testing.T) {
 			}
 			want := doctor.DoctorCheck{Name: "Project Gitignore", Status: doctor.StatusWarning}
 			switch name {
-			case "directory":
+			case "directory", "directory_clean":
 				_, readErr := os.ReadFile(excludePath)
 				if readErr == nil || os.IsNotExist(readErr) {
 					t.Fatalf("non-ENOENT read-error precondition: %v", readErr)
 				}
 				want.Message = "Unable to read .git/info/exclude"
 				want.Detail = readErr.Error()
-			case "missing":
+				if name == "directory" {
+					want.Detail += "; tracked .gitignore also contains the beads section"
+				}
+			case "missing", "dangling_symlink":
+				// Git also treats a dangling exclude symlink as missing; repair advice remains valid.
 				want.Message = "Stealth mode: .git/info/exclude missing Dolt exclusion patterns"
 				want.Detail = "Missing from .git/info/exclude: " + strings.Join(doctor.ProjectGitignorePatterns, ", ")
 				want.Fix = "Run: bd doctor --fix"
@@ -641,7 +652,7 @@ func TestCheckProjectExcludeStealthReadBoundaries(t *testing.T) {
 			if got, err := os.ReadFile(gitignorePath); err != nil || string(got) != gitignoreContent {
 				t.Errorf("tracked gitignore changed to %q: %v", got, err)
 			}
-			if name == "missing" {
+			if name == "missing" || name == "dangling_symlink" {
 				if _, err := os.Stat(excludePath); !os.IsNotExist(err) {
 					t.Errorf("diagnostic created missing exclude: %v", err)
 				}

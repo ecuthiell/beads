@@ -265,11 +265,15 @@ func checkProjectExcludeStealth(repoPath string) doctor.DoctorCheck {
 	if data, err := os.ReadFile(excludePath); err == nil {
 		content = string(data)
 	} else if !os.IsNotExist(err) {
+		detail := err.Error()
+		if trackedGitignoreHasBeadsSection(repoPath) {
+			detail += "; tracked .gitignore also contains the beads section"
+		}
 		return doctor.DoctorCheck{
 			Name:    "Project Gitignore",
 			Status:  doctor.StatusWarning,
 			Message: "Unable to read .git/info/exclude",
-			Detail:  err.Error(),
+			Detail:  detail,
 		}
 	}
 
