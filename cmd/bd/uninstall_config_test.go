@@ -31,7 +31,10 @@ func TestStandaloneHooksAbsoluteFallbackHasNoConfigAuthority(t *testing.T) {
 			preserveStandaloneHookInputs(t, filepath.Join(decoy, ".git", "config"), filepath.Join(os.Getenv("HOME"), ".gitconfig"))
 			for _, mode := range []string{"shared", "beads"} {
 				setStandaloneHookMode(t, mode)
-				require.ErrorContains(t, hooksInstallCmd.RunE(hooksInstallCmd, nil), "require a working Git repository")
+				var err error
+				stderr := captureStderr(t, func() { err = hooksInstallCmd.RunE(hooksInstallCmd, nil) })
+				require.Equal(t, &exitError{Code: 1}, err)
+				require.Contains(t, stderr, "require a working Git repository")
 				require.NoFileExists(t, filepath.Join(hooksDir, "pre-commit"))
 			}
 			setStandaloneHookMode(t, "")

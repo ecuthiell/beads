@@ -455,7 +455,10 @@ func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
 			}
 			if name == "config_lock" {
 				require.NoError(t, os.WriteFile(filepath.Join(common, "config.lock"), []byte("owned lock"), 0600))
-				require.ErrorContains(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil), "failed to reset")
+				var err error
+				stderr := captureStderr(t, func() { err = hooksUninstallCmd.RunE(hooksUninstallCmd, nil) })
+				require.Equal(t, &exitError{Code: 1}, err)
+				require.Contains(t, stderr, "failed to reset")
 				return
 			}
 			require.NoError(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil))

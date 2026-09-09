@@ -28,13 +28,15 @@ func TestStandaloneHookCommandKeepsTrackedGuard(t *testing.T) {
 			initExcludeGit(t, target, "add", ".beads-hooks/pre-commit")
 			initExcludeGit(t, target, "config", "--local", "core.hooksPath", hooksDir)
 			setStandaloneHookMode(t, mode)
-			err := hooksInstallCmd.RunE(hooksInstallCmd, nil)
+			var err error
+			stderr := captureStderr(t, func() { err = hooksInstallCmd.RunE(hooksInstallCmd, nil) })
 			if mode == "shared" {
 				require.NoError(t, err)
 				require.Contains(t, string(readInitHooksFile(t, path)), foreign)
 				require.Contains(t, string(readInitHooksFile(t, path)), hookSectionBeginPrefix)
 			} else {
-				require.ErrorContains(t, err, "tracked by git")
+				require.Equal(t, &exitError{Code: 1}, err)
+				require.Contains(t, stderr, "tracked by git")
 				require.Equal(t, foreign, string(readInitHooksFile(t, path)))
 				require.NoFileExists(t, filepath.Join(hooksDir, "post-merge"))
 			}
