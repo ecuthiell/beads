@@ -1021,6 +1021,8 @@ func TestInitPromptNonGitRepo(t *testing.T) {
 // TestInitPromptExistingRole verifies behavior when beads.role is already set
 func TestInitPromptExistingRole(t *testing.T) {
 	skipIfNoDolt(t)
+	// Reinit publishes its selected workspace into the command environment.
+	t.Setenv("BEADS_DIR", "")
 	t.Run("existing role is preserved on reinit with --force", func(t *testing.T) {
 		// Reset global state
 		origDBPath := dbPath
@@ -1087,11 +1089,16 @@ func TestInitContributorSetsBeadsRoleContributor(t *testing.T) {
 	skipIfNoDolt(t)
 
 	// Serial: this fixture owns command flags, stdin, cwd and process environment.
+	// Do not inherit another in-process command's selected workspace.
+	t.Setenv("BEADS_DIR", "")
 	// The pipe below supplies real wizard answers; explicitly allow interaction
 	// even when CI or terminal detection would normally suppress it.
 	t.Setenv("BD_NON_INTERACTIVE", "0")
 	for _, name := range []string{"contributor", "team", "force", "non-interactive", "role", "prefix", "quiet"} {
 		flag := initCmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("missing init flag --%s", name)
+		}
 		value, changed := flag.Value.String(), flag.Changed
 		t.Cleanup(func() {
 			if err := flag.Value.Set(value); err != nil {
@@ -1125,8 +1132,7 @@ func TestInitContributorSetsBeadsRoleContributor(t *testing.T) {
 	tmpDir := newGitRepo(t)
 	t.Chdir(tmpDir)
 
-	// Local remotes avoid external lookups during initialization and let the
-	// contributor wizard detect a fork without an extra "continue anyway" prompt.
+	// Owned local remotes prevent network lookups during initialization.
 	cmd := exec.Command("git", "remote", "add", "origin", newGitRepo(t))
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
