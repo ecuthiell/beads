@@ -38,12 +38,13 @@ func loadGitContext(workDir string, env []string) gitContext {
 	cmd.Dir, cmd.Env = workDir, env
 	output, err := cmd.Output()
 	if err != nil {
-		ctx.err = fmt.Errorf("not a git repository: %w", err)
 		if workDir != "" {
 			ctx.err = fmt.Errorf("resolve Git working tree: %w", err)
 			if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
 				ctx.err = fmt.Errorf("%w: %s", ctx.err, strings.TrimSpace(string(exit.Stderr)))
 			}
+		} else {
+			ctx.err = fmt.Errorf("not a git repository: %w", err)
 		}
 		return ctx
 	}
@@ -121,6 +122,8 @@ func ResolveHooksContext(workDir string, env []string) (HooksContext, error) {
 	if err != nil {
 		return HooksContext{}, err
 	}
+	// This caller-supplied directory must resolve before it can select a repo.
+	// Unlike the discovered repoRoot spelling above, it is an input to Git.
 	workDir, err = filepath.EvalSymlinks(workDir)
 	if err != nil {
 		return HooksContext{}, fmt.Errorf("resolve hooks working directory: %w", err)
