@@ -291,8 +291,8 @@ func TestResolveHooksContext(t *testing.T) {
 	t.Run("legacy_absolute_after_cached_failure", func(t *testing.T) {
 		t.Chdir(nonrepo)
 		ResetCaches()
-		if _, err := getGitContext(); err == nil {
-			t.Fatal("nonrepo cache precondition")
+		if _, err := getGitContext(); err == nil || !strings.HasPrefix(err.Error(), "not a git repository: ") {
+			t.Fatalf("legacy nonrepo error prefix must remain compatible: %v", err)
 		}
 		absolute := filepath.Join(home, "global outside repository")
 		git(selected, "config", "--global", "core.hooksPath", absolute)
