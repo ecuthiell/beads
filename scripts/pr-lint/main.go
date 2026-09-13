@@ -1,6 +1,8 @@
 // pr-lint runs the repository's canonical Go lint passes without requiring
 // Make or Bash. The supported scripts/ci/pr-lint.sh entrypoint delegates here,
 // and bd preflight runs this checkout-owned command for the Beads source tree.
+// The standalone workflow lint action and pre-commit hook do not call this
+// driver; their scope and behavior still differ.
 package main
 
 import (
@@ -222,6 +224,8 @@ func buildEnvironment(environ []string, caseInsensitive bool) []string {
 	}
 
 	goFlags, _ := environmentValue(environ, "GOFLAGS", caseInsensitive)
+	// Match .buildflags: an appended -tags value overrides an inherited bare-Go
+	// -tags value rather than merging tag lists.
 	if !strings.Contains(goFlags, beadsBuildTags) {
 		if goFlags != "" {
 			goFlags += " "

@@ -1,6 +1,6 @@
 # Linting Policy
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-09-13
 
 Freshness source: `.golangci.yml`, `scripts/ci/pr-lint.sh`, `scripts/pr-lint/`,
 `Makefile`, `.github/workflows/pr.yml`, and `.github/workflows/main.yml`.
@@ -47,6 +47,17 @@ The wrapper runs:
 The shell wrapper records one aggregate timing for the Go lint driver. The
 driver prints a heading and result for each native or Windows pass so failures
 remain attributable without duplicating target-selection policy in Bash.
+
+The shared driver owns the lint passes used by `scripts/ci/pr-lint.sh` and
+Beads-source `bd preflight`. The standalone workflow lint action and pre-commit
+hook do not call it. The hook uses changed-lines scope, adds `--fix`, and omits
+the Windows cross-lint pass. Workflow consolidation remains tracked in #5629.
+
+The driver matches `.buildflags` when preparing `GOFLAGS`: appending
+`-tags=gms_pure_go` can override an inherited bare-Go tags value; it does not
+merge tag lists. Each lint process has a six-minute context and a five-minute
+golangci-lint timeout. Cancelling preflight's outer `go run` command does not
+guarantee immediate descendant cleanup.
 
 ## Policy
 

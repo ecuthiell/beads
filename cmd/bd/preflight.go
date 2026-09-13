@@ -347,6 +347,8 @@ func runLintCheckAt(root string, skipLint bool) CheckResult {
 
 	ctx, cancel := context.WithTimeout(context.Background(), invocation.timeout)
 	defer cancel()
+	// Cancellation targets the direct command. For the Beads go run invocation,
+	// it does not provide process-tree ownership: descendants may outlive it.
 	cmd := exec.CommandContext(ctx, invocation.executable, invocation.args...)
 	cmd.Dir = invocation.dir
 	output, err := cmd.CombinedOutput()
