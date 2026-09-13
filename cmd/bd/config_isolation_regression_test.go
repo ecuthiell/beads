@@ -102,6 +102,11 @@ func TestDispatchDoesNotPolluteViperIssuePrefix(t *testing.T) {
 // Command setup uses raw os.Setenv. A fresh fixture must contain that mutation
 // even when its caller's BEADS_DIR was absent, explicitly empty, or inherited.
 func TestIsolateBeadsDirForTestCommandCleanup(t *testing.T) {
+	oldServerMode, oldProxiedServerMode := serverMode, proxiedServerMode
+	t.Cleanup(func() {
+		serverMode, proxiedServerMode = oldServerMode, oldProxiedServerMode
+	})
+
 	ensureCleanGlobalState(t)
 	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
 
