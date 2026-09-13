@@ -81,7 +81,7 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 		}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
 			return err
 		}
-		return issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID)
+		return issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID, actor)
 	}
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err
@@ -93,7 +93,7 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 	}, domain.RecordEventOpts{UseWispsTable: opts.UseWispsTable}); err != nil {
 		return err
 	}
-	return issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID)
+	return issueops.RecordEventInTx(ctx, r.runner, issueops.EventCreate, issue.ID, actor)
 }
 
 func (r *issueSQLRepositoryImpl) InsertBatch(ctx context.Context, issues []*types.Issue, actor string, opts domain.InsertIssueOpts) error {
@@ -120,12 +120,12 @@ func (r *issueSQLRepositoryImpl) PromoteFromEphemeral(ctx context.Context, id, a
 	return issueops.PromoteFromEphemeralInTx(ctx, r.runner, id, actor)
 }
 
-func (r *issueSQLRepositoryImpl) MovePersistence(ctx context.Context, id string, mode types.PersistenceMode) (bool, error) {
+func (r *issueSQLRepositoryImpl) MovePersistence(ctx context.Context, id string, mode types.PersistenceMode, actor string) (bool, error) {
 	issue, err := issueops.GetIssueInTx(ctx, r.runner, id)
 	if err != nil {
 		return false, fmt.Errorf("db: MovePersistence %s: get issue: %w", id, err)
 	}
-	result, err := issueops.MoveIssuePersistenceInTx(ctx, r.runner, issue, mode)
+	result, err := issueops.MoveIssuePersistenceInTx(ctx, r.runner, issue, mode, actor)
 	if err != nil {
 		return false, fmt.Errorf("db: MovePersistence %s: %w", id, err)
 	}
@@ -327,7 +327,7 @@ func (r *issueSQLRepositoryImpl) Update(ctx context.Context, id string, updates 
 	}
 	// Snapshot only after all derived blocked-state maintenance has completed.
 	// The no-op early returns above wrote nothing and journal nothing.
-	return issueops.RecordEventInTx(ctx, r.runner, issueops.EventUpdate, id)
+	return issueops.RecordEventInTx(ctx, r.runner, issueops.EventUpdate, id, actor)
 }
 
 // CompareAndSetMetadataKey runs the SHARED compare-and-set body, unwrapped.
@@ -535,7 +535,7 @@ func (r *issueSQLRepositoryImpl) Claim(ctx context.Context, id, actor string, op
 	}
 	// A claim changes assignee and status; the lost-CAS path returns above
 	// without writing and journals nothing.
-	if err := issueops.RecordEventInTx(ctx, r.runner, issueops.EventUpdate, id); err != nil {
+	if err := issueops.RecordEventInTx(ctx, r.runner, issueops.EventUpdate, id, actor); err != nil {
 		return domain.ClaimRowResult{}, err
 	}
 
@@ -567,35 +567,33 @@ func (r *issueSQLRepositoryImpl) Get(ctx context.Context, id string, opts domain
 }
 
 func (r *issueSQLRepositoryImpl) GetByIDs(ctx context.Context, ids []string, opts domain.IssueTableOpts) ([]*types.Issue, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
 	table := pickIssueTable(opts.UseWispsTable)
-	//nolint:gosec // G201: table is one of two hardcoded constants
-	q := fmt.Sprintf("SELECT %s FROM %s %s WHERE id IN (%s)",
-		issueSelectColumns, table, sqlbuild.LeaseJoin(table), strings.Join(placeholders, ","))
-	rows, err := r.runner.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("db: GetByIDs: %w", err)
-	}
-	defer rows.Close()
-
 	var out []*types.Issue
-	for rows.Next() {
-		issue, err := scanIssue(rows)
+	err := forEachIDBatch(ids, func(batch []string) error {
+		placeholders, args := buildInPlaceholders(batch)
+		//nolint:gosec // G201: table is one of two hardcoded constants
+		q := fmt.Sprintf("SELECT %s FROM %s %s WHERE id IN (%s)",
+			issueSelectColumns, table, sqlbuild.LeaseJoin(table), placeholders)
+		rows, err := r.runner.QueryContext(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("db: GetByIDs: scan: %w", err)
+			return fmt.Errorf("db: GetByIDs: %w", err)
 		}
-		out = append(out, issue)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db: GetByIDs: rows: %w", err)
+		defer rows.Close()
+
+		for rows.Next() {
+			issue, err := scanIssue(rows)
+			if err != nil {
+				return fmt.Errorf("db: GetByIDs: scan: %w", err)
+			}
+			out = append(out, issue)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("db: GetByIDs: rows: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -971,8 +969,9 @@ func (r *issueSQLRepositoryImpl) Delete(ctx context.Context, id string, opts dom
 	if err := issueops.DeleteLeaseInTx(ctx, r.runner, id); err != nil {
 		return err
 	}
-	// The rows==0 return above keeps this actually-deleted-only.
-	return issueops.RecordDeleteInTx(ctx, r.runner, id)
+	// The rows==0 return above keeps this actually-deleted-only. The repository
+	// Delete surface carries no actor, so the row records none.
+	return issueops.RecordDeleteInTx(ctx, r.runner, id, "")
 }
 
 func (r *issueSQLRepositoryImpl) DeleteByIDs(ctx context.Context, ids []string, opts domain.IssueTableOpts) (int, error) {
@@ -1031,8 +1030,9 @@ func (r *issueSQLRepositoryImpl) DeleteByIDs(ctx context.Context, ids []string, 
 			}
 		}
 	}
+	// The repository DeleteByIDs surface carries no actor, so the rows record none.
 	for _, id := range actualIDs {
-		if err := issueops.RecordDeleteInTx(ctx, r.runner, id); err != nil {
+		if err := issueops.RecordDeleteInTx(ctx, r.runner, id, ""); err != nil {
 			return total, err
 		}
 	}
