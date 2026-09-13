@@ -175,11 +175,11 @@ func hasRequiredTag(goArgs []string) bool {
 	found := false
 	for i := 1; i < len(goArgs); i++ {
 		arg := goArgs[i]
-		if arg == "--" || (goArgs[0] == "test" && arg == "-args") {
+		if arg == "--" || (goArgs[0] == "test" && (arg == "-args" || arg == "--args")) {
 			break
 		}
 		switch {
-		case arg == "-tags":
+		case arg == "-tags" || arg == "--tags":
 			if i+1 >= len(goArgs) {
 				lastTags = ""
 				found = true
@@ -188,8 +188,8 @@ func hasRequiredTag(goArgs []string) bool {
 			i++
 			lastTags = goArgs[i]
 			found = true
-		case strings.HasPrefix(arg, "-tags="):
-			lastTags = strings.TrimPrefix(arg, "-tags=")
+		case strings.HasPrefix(arg, "-tags=") || strings.HasPrefix(arg, "--tags="):
+			_, lastTags, _ = strings.Cut(arg, "=")
 			found = true
 		}
 	}
