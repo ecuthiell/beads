@@ -5,6 +5,7 @@ package hooks
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -75,19 +76,21 @@ func (r *Runner) Run(event string, issue *types.Issue) {
 		return // Not executable, skip
 	}
 
-	r.runAsync(hookPath, event, issue)
+	r.runAsync(hookPath, event, issue, os.Stderr)
 }
 
 // runAsync owns the fire-and-forget boundary after Run has established that a
 // configured executable hook exists. The mutation still cannot fail because a
 // hook did, but a platform capability refusal must not disappear with the
 // discarded error.
-func (r *Runner) runAsync(hookPath, event string, issue *types.Issue) {
+// Both async and sync use the same runHook body, with the same per-hook timeout
+// and platform-specific cleanup on expiry.
+func (r *Runner) runAsync(hookPath, event string, issue *types.Issue, stderr io.Writer) {
 	r.inFlight.Add(1)
 	go func() {
 		defer r.inFlight.Done()
 		if err := r.runHook(hookPath, event, issue); errors.Is(err, errHookExecutionUnsupported) {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: hook %q was not run: %v\n", hookPath, err)
+			_, _ = fmt.Fprintf(stderr, "warning: hook %q was not run: %v\n", hookPath, err)
 		}
 	}()
 }
