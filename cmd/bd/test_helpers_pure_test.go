@@ -81,7 +81,7 @@ func generateUniqueTestID(t *testing.T, prefix string, index int) string {
 }
 
 // isolateBeadsDirForTest starts a fresh-workspace fixture without an inherited
-// selection and restores the caller's environment after command dispatch, even
+// selection and restores BEADS_DIR exactly after command dispatch, even
 // when dispatch changes BEADS_DIR with raw os.Setenv.
 // Call before fixture setup or dispatch; like t.Setenv, it is not parallel-safe.
 // Tests that intentionally select a workspace should set BEADS_DIR explicitly

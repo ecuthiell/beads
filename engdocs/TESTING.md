@@ -86,8 +86,8 @@ do not inherit the developer's global hooks configuration.
 
 In `cmd/bd`, fresh-workspace command fixtures should call
 `isolateBeadsDirForTest(t)` before setup or dispatch. It clears inherited
-`BEADS_DIR` and restores the caller's exact environment at cleanup, including
-raw command-dispatch mutations. The `TestMain` reset only isolates startup.
+`BEADS_DIR` and restores that variable exactly at cleanup, even after raw
+command-dispatch mutations. The `TestMain` reset only isolates startup.
 These fixtures must not use `t.Parallel()`. Tests intentionally selecting a
 workspace should use `t.Setenv("BEADS_DIR", ...)`; `initConfigForTest` and
 `ensureCleanGlobalState` preserve that selection.
