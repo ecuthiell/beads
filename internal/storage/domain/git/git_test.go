@@ -63,16 +63,16 @@ func (s *testSuite) TestConfig_RoundTrip() {
 
 func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	s.gitInit()
-	s.T().Setenv("LC_ALL", "C")
 	configPath := filepath.Join(s.tmpDir, ".git", "config")
 	original, err := os.ReadFile(configPath)
 	s.Require().NoError(err)
 	for _, tc := range []struct {
-		name, key, diagnostic string
+		name, key string
+		exitCode  int
 	}{
-		{"malformed_config", "beads.role", "bad config line"},
-		{"invalid_key", "invalid", "key does not contain a section"},
-		{"invalid_routing_boolean", "beads.role", "bad boolean"},
+		{"malformed_config", "beads.role", 128},
+		{"invalid_key", "invalid", 1},
+		{"invalid_routing_boolean", "beads.role", 128},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -91,12 +91,13 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			s.Require().Error(err)
 			s.False(found)
 			s.Empty(value)
-			s.Contains(err.Error(), tc.diagnostic)
 			var exitErr *exec.ExitError
 			s.Require().ErrorAs(err, &exitErr)
-			if tc.name == "invalid_key" {
-				s.Equal(1, exitErr.ExitCode())
-			} else {
+			s.Equal(tc.exitCode, exitErr.ExitCode())
+			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
+			s.Require().NotEmpty(diagnostic)
+			s.Contains(err.Error(), diagnostic)
+			if tc.name != "invalid_key" {
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
@@ -105,6 +106,7 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}
 }
 
+// Regression guard: pre-canceled contexts already propagated before the config fix.
 func (s *testSuite) TestConfig_CancellationIsNotMissing() {
 	ctx, cancel := context.WithCancel(s.Ctx())
 	cancel()
