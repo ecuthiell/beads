@@ -128,7 +128,7 @@ fi
 		"PATH=" + os.Getenv("PATH"),
 		"BEADS_TEST_COMMAND_PATH=" + commandPath,
 		// Minimal child environments cannot rely on Git Bash's ambient /tmp mount.
-		"TMPDIR=" + filepath.ToSlash(stateDir),
+		"TMPDIR=" + statePath,
 		"HOME=" + statePath,
 		"LC_ALL=C",
 		"LANG=C",

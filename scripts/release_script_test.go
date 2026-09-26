@@ -329,7 +329,10 @@ func TestShellPathUnderEnvKeepsDrivePathsAcrossTempRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if volume := filepath.VolumeName(root); len(volume) != 2 || volume[1] != ':' {
 		t.Skip("ordinary drive paths are required for this MSYS namespace regression")
 	}
@@ -347,7 +350,11 @@ func TestShellPathUnderEnvKeepsDrivePathsAcrossTempRoots(t *testing.T) {
 	}
 	for i := range 2 {
 		t.Run(fmt.Sprintf("temp-root-%d", i), func(t *testing.T) {
-			temp := filepath.ToSlash(t.TempDir())
+			temp, err := filepath.Abs(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			temp = filepath.ToSlash(temp)
 			env := append(shellPathEnv(), "TMP="+temp, "TEMP="+temp, "TMPDIR="+temp)
 			paths := []string{
 				shellPathUnderEnv(t, bash, bin, env),
