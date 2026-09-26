@@ -199,7 +199,14 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// bd config's own beads.role reads and writes ignore inherited Git
+			// routing, including GIT_CONFIG_GLOBAL, so the value lands in the
+			// repository this command selected. The scope is this command set,
+			// not role resolution as a whole: routing.DetectUserRole,
+			// `bd config show`, `bd doctor` and `bd hooks uninstall` still
+			// resolve beads.role through the inherited environment, and
+			// beads.RepoContext.Role pins GIT_DIR/GIT_WORK_TREE last-wins but
+			// still inherits GIT_CONFIG_*.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {

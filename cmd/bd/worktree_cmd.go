@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/execenv"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -686,9 +687,13 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 	cleaned := scrubWorktreeGitRoutingEnvForOS(env, goos)
 	// ScrubRoutingForOS returns a fresh slice, so filtering it in place is safe.
 	result := cleaned[:0]
+	// Normalize this pass's key identity through the same primitive the routing
+	// pass above uses, so both agree on which entries are the same key.
+	noReplaceObjects := execenv.KeyIdentityForOS("GIT_NO_REPLACE_OBJECTS", goos)
+	optionalLocks := execenv.KeyIdentityForOS("GIT_OPTIONAL_LOCKS", goos)
 	for _, entry := range cleaned {
-		key := normalizeWorktreeGitEnvKey(worktreeGitEnvKey(entry), goos)
-		if key == "GIT_NO_REPLACE_OBJECTS" || key == "GIT_OPTIONAL_LOCKS" {
+		key := execenv.KeyIdentityForOS(worktreeGitEnvKey(entry), goos)
+		if key == noReplaceObjects || key == optionalLocks {
 			continue
 		}
 		result = append(result, entry)
@@ -698,13 +703,6 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 
 func worktreeGitEnvKey(entry string) string {
 	return gitenv.EntryKey(entry)
-}
-
-func normalizeWorktreeGitEnvKey(key, goos string) string {
-	if goos == "windows" {
-		return strings.ToUpper(key)
-	}
-	return key
 }
 
 // clearWorktreeGitRoutingEnv establishes the command working directory as the
