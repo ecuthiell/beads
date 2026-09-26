@@ -182,6 +182,7 @@ var versionExemptions = map[string]string{
 	"DeleteIssuesBySourceRepoInTx":    "bulk delete: no surviving row (Phase 3)",
 	"DeleteWispFromDependenciesInTx":  "delete-family cleanup of edges whose target is gone",
 	"DeleteWispsFromDependenciesInTx": "delete-family cleanup of edges whose target is gone",
+	"DeleteWispAuxRowsInTx":           "delete-family cleanup of ephemeral wisp auxiliary rows; wisps are not versioned",
 
 	// rename — history stays keyed to the old id; out of contract by design.
 	"UpdateIssueIDInTx":               "rename: out of contract by design (history stays keyed to the old id)",
