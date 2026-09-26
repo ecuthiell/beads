@@ -413,6 +413,11 @@ func (c *initHooksContext) needsUpdate() bool {
 }
 
 func (c *initHooksContext) configureHooksPath(hooksDir string) error {
+	// #nosec G702 -- no shell is involved: the binary is the literal "git" and
+	// every path is passed as its own argv element, so neither c.paths.CommonDir
+	// nor hooksDir can inject a command. Both reach here from the selected hooks
+	// context and are absolute, and this mirrors the pre-existing
+	// configureBeadsHooksPath in hooks.go.
 	cmd := exec.Command("git", "--git-dir", c.paths.CommonDir, "config", "--local", "core.hooksPath", hooksDir)
 	cmd.Dir, cmd.Env = c.workDir, c.env
 	if output, err := cmd.CombinedOutput(); err != nil {

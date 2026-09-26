@@ -788,8 +788,13 @@ func EnsureProjectGitignore(repoPath string) error {
 		return nil // All patterns already present
 	}
 
-	lines := append([]string{"", ProjectGitignoreHeader}, toAdd...)
-	newContent := gitignore.AppendLines(content, lines)
+	// A fresh .gitignore must not start with a blank line; the separator only
+	// belongs between existing content and the appended block.
+	lines := []string{ProjectGitignoreHeader}
+	if len(content) > 0 {
+		lines = []string{"", ProjectGitignoreHeader}
+	}
+	newContent := gitignore.AppendLines(content, append(lines, toAdd...))
 
 	// #nosec G306 -- gitignore needs to be readable by git and collaborators
 	if err := os.WriteFile(gitignorePath, newContent, 0644); err != nil {
