@@ -256,8 +256,8 @@ jobs:
   # The lingering-handle liveness regression test is //go:build windows: the
   # Ubuntu job above selects it by name but compiles it out, and main.yml's
   # Windows job runs only on pushes to main (build/smoke, no go test). Run
-  # exactly the liveness pair on windows-latest so the regression guard
-  # actually executes at PR time.
+  # the liveness pair and shell fixtures on windows-latest so their guards
+  # actually execute at PR time.
   test-windows-liveness:
     name: Test (Windows) cmd/bd liveness regression
     runs-on: windows-latest
@@ -273,6 +273,12 @@ jobs:
 
       - name: Run Windows liveness regression test
         run: go test -tags gms_pure_go -count=1 -run '^TestIsServerProbablyRunning' ./cmd/bd
+
+      - name: Run script fixtures with Git Bash
+        shell: bash
+        run: |
+          export PATH="$(dirname "$BASH"):$PATH"
+          go test -tags gms_pure_go -count=1 -timeout=5m -run '^Test(ConformanceScript|InstallDoltPropagatesDownloadFailure)' ./scripts
 
   # internal/doltversion carries Windows-specific branches (PATHEXT
   # extension completion in Resolve, ERROR_BAD_EXE_FORMAT detection, the
