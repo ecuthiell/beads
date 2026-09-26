@@ -279,7 +279,12 @@ jobs:
         run: |
           $bash = (Get-Command bash.exe -CommandType Application -ErrorAction Stop).Source
           $env:PATH = "$(Split-Path -LiteralPath $bash);$env:PATH"
-          go test -tags gms_pure_go -count=1 -timeout=5m -run '^Test(ShellPathUnderEnv|ConformanceScript|InstallDoltPropagatesDownloadFailure|PullDoltImageRetriesTransientFailures|TestScriptPrebuiltBinaryContract)' ./scripts
+          $events = go test -json -tags gms_pure_go -count=1 -timeout=5m -run '^Test(ShellPathUnderEnv|ConformanceScript|InstallDoltPropagatesDownloadFailure|PullDoltImageRetriesTransientFailures|TestScriptPrebuiltBinaryContract)' ./scripts |
+            ForEach-Object { Write-Host $_; $_ | ConvertFrom-Json }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not ($events | Where-Object { $_.Action -eq 'pass' -and $_.Test -eq 'TestShellPathUnderEnvKeepsDrivePathsAcrossTempRoots' })) {
+            throw 'The Windows drive-path regression must execute and pass'
+          }
 
   # internal/doltversion carries Windows-specific branches (PATHEXT
   # extension completion in Resolve, ERROR_BAD_EXE_FORMAT detection, the

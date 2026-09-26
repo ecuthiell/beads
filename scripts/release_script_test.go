@@ -330,6 +330,9 @@ func TestShellPathUnderEnvKeepsDrivePathsAcrossTempRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	if volume := filepath.VolumeName(root); len(volume) != 2 || volume[1] != ':' {
+		t.Skip("ordinary drive paths are required for this MSYS namespace regression")
+	}
 	bin := filepath.Join(root, "fixture bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)
