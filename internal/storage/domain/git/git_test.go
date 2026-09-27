@@ -77,7 +77,9 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}{
 		{"malformed_config", "beads.role", 128},
 		{"invalid_key", "invalid", 1},
-		{"invalid_routing_boolean", "beads.role", 128},
+		// beads.role reads now scrub GIT_CONFIG* routing, so a routing poison can
+		// only reach a key that is not role-scoped.
+		{"invalid_routing_boolean", "test.marker", 128},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -102,10 +104,20 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			if tc.name != "invalid_key" {
+			if tc.name == "malformed_config" {
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
+			}
+			if tc.name == "invalid_routing_boolean" {
+				// The same poison that fails the read above cannot reach beads.role,
+				// which resolves as absent rather than as a preserved read failure.
+				role, roleFound, roleErr := s.repo.GetConfig(s.Ctx(), "beads.role")
+				s.Require().NoError(roleErr)
+				s.False(roleFound)
+				s.Empty(role)
+				_, _, useCaseErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(useCaseErr)
 			}
 		})
 	}
@@ -455,8 +467,10 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
-				require.False(t, found, "generic role reads still use the current caller environment")
+				// The generic reader runs under the caller's current environment, so the
+				// broken HOME config surfaces as a preserved read failure, not absence.
+				require.Error(t, err, "generic role reads still use the current caller environment")
+				require.False(t, found)
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
 				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))
