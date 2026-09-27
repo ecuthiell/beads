@@ -668,13 +668,12 @@ func TestGitExcludeExplicitPathSelectsCommonDir(t *testing.T) {
 			worktree, decoy, commonExclude, privateExclude := newInitExcludeRepos(t)
 			t.Setenv(key, filepath.Join(decoy, ".git"))
 			t.Setenv("GIT_WORK_TREE", decoy)
-			// The empty-path API resolves against the current directory, and the
-			// probe scrubs inherited routing, so the decoy's exclude is expected
-			// here because newInitExcludeRepos chdir'd there -- not because the
-			// GIT_DIR/GIT_COMMON_DIR set above selected it.
-			currentDir, err := resolveGitExcludePath("")
+			// The empty-path API resolves against the current directory, which is the
+			// decoy here; the probe scrubs inherited routing, so that selection comes
+			// from the working directory rather than from the key set above.
+			inherited, err := resolveGitExcludePath("")
 			require.NoError(t, err)
-			got, err := os.Stat(currentDir)
+			got, err := os.Stat(inherited)
 			require.NoError(t, err)
 			want, err := os.Stat(filepath.Join(decoy, ".git", "info", "exclude"))
 			require.NoError(t, err)

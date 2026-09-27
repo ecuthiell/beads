@@ -99,7 +99,7 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			if tc.name != "invalid_key" {
+			if tc.name == "malformed_config" {
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
