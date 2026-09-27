@@ -36,11 +36,12 @@ var (
 func buildEmbeddedBD(t *testing.T) string {
 	t.Helper()
 	embeddedBDOnce.Do(func() {
-		if prebuilt := os.Getenv("BEADS_TEST_BD_BINARY"); prebuilt != "" {
-			if _, err := os.Stat(prebuilt); err != nil {
-				embeddedBDErr = fmt.Errorf("BEADS_TEST_BD_BINARY=%q not found: %w", prebuilt, err)
-				return
-			}
+		prebuilt, err := findPrebuiltBDBinary()
+		if err != nil {
+			embeddedBDErr = err
+			return
+		}
+		if prebuilt != "" {
 			embeddedBD = prebuilt
 			return
 		}
@@ -1649,5 +1650,85 @@ func TestEmbeddedInitArtifactRouting(t *testing.T) {
 	show.Dir, show.Env = target, gitenv.ScrubRouting(os.Environ())
 	if got, err := show.CombinedOutput(); err != nil || !bytes.Equal(got, want) {
 		t.Errorf("embedded init did not commit target metadata: %v: %s", err, got)
+	}
+}
+
+func TestEmbeddedInitGitBootstrapRouting(t *testing.T) {
+	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
+		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
+	}
+	bd := buildEmbeddedBD(t)
+	for _, name := range []string{"fresh", "decoy", "invalid", "existing_invalid", "explicit_storage", "quiet"} {
+		t.Run(name, func(t *testing.T) {
+			existing, decoy, home := newInitRoleFixture(t)
+			target := t.TempDir()
+			if name == "existing_invalid" {
+				target = existing
+			}
+			global := filepath.Join(home, ".gitconfig")
+			initRoleFixtureGit(t, existing, "config", "--file", global, "user.name", "Bootstrap Fixture")
+			initRoleFixtureGit(t, existing, "config", "--file", global, "user.email", "bootstrap@example.invalid")
+			missingGit := filepath.Join(home, "missing git dir")
+			if name == "invalid" || name == "existing_invalid" {
+				t.Setenv("GIT_DIR", missingGit)
+			} else if name == "decoy" || name == "explicit_storage" {
+				t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+				t.Setenv("GIT_WORK_TREE", decoy)
+			}
+			preserveInitRoleInputs(t, global, filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "HEAD"))
+			beadsDir := filepath.Join(target, ".beads")
+			args := []string{"init", "--prefix", "bootstrapfixture", "--non-interactive", "--skip-hooks", "--skip-agents", "--role", "maintainer"}
+			if name == "quiet" {
+				args = append(args, "--quiet")
+			}
+			cmd := exec.Command(bd, args...)
+			cmd.Dir = target
+			env := bdEnv(home)
+			for _, key := range []string{"BEADS_DIR", "BEADS_DB", "BD_DB", "BD_DOLT_HOST", "BD_DOLT_PORT"} {
+				env = envWithout(env, key)
+			}
+			if name == "explicit_storage" {
+				beadsDir = filepath.Join(home, "separate storage", ".beads")
+				if err := os.MkdirAll(filepath.Dir(beadsDir), 0750); err != nil {
+					t.Fatal(err)
+				}
+				env = append(env, "BEADS_DIR="+beadsDir)
+			}
+			cmd.Env = append(env, "DOLT_ROOT_PATH="+home, "BD_DOLT_MODE=embedded", "BD_EVENTS_JOURNAL=false")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("embedded bootstrap failed: %v\n%s", err, out)
+			}
+			cfg, err := configfile.Load(beadsDir)
+			if err != nil || cfg == nil || cfg.DoltMode != configfile.DoltModeEmbedded {
+				t.Fatalf("embedded metadata missing: %+v (%v)", cfg, err)
+			}
+			if info, err := os.Stat(filepath.Join(beadsDir, "embeddeddolt", "bootstrapfixture", ".dolt")); err != nil || !info.IsDir() {
+				t.Fatalf("embedded database missing: %v", err)
+			}
+			gitDir := filepath.Join(target, ".git")
+			if name == "explicit_storage" {
+				if _, err := os.Stat(gitDir); !os.IsNotExist(err) {
+					t.Fatalf("explicit storage must skip repository creation: %v", err)
+				}
+			} else {
+				actualGit := initRoleFixtureGit(t, target, "rev-parse", "--absolute-git-dir")
+				wantInfo, err := os.Stat(gitDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				actualInfo, err := os.Stat(actualGit)
+				if err != nil || !os.SameFile(wantInfo, actualInfo) {
+					t.Fatalf("selected Git directory = %q (%v)", actualGit, err)
+				}
+			}
+			wantBanner := name != "quiet" && name != "existing_invalid" && name != "explicit_storage"
+			if got := strings.Count(string(out), "Initialized git repository"); (wantBanner && got != 1) || (!wantBanner && got != 0) {
+				t.Errorf("initialization banner count = %d, want visible=%v: %s", got, wantBanner, out)
+			}
+			if _, err := os.Stat(missingGit); !os.IsNotExist(err) {
+				t.Errorf("init created the inherited invalid Git directory: %v", err)
+			}
+		})
 	}
 }
