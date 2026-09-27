@@ -1820,6 +1820,8 @@ func hookLinkedWorktreePrimaryRoot(hookRoot string) string {
 	if hookRoot == "" {
 		return ""
 	}
+	// #nosec G702 - fixed "git" command; args are constant subcommands plus an internal
+	// hookRoot derived from the hook's own beads dir, never attacker-controlled input.
 	cmd := exec.Command("git", "-C", hookRoot, "rev-parse", "--git-common-dir")
 	// Scrub the inherited GIT_* vars so git describes hookRoot itself rather
 	// than whatever repository GIT_DIR happens to name.
