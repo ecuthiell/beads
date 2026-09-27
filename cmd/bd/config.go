@@ -199,7 +199,15 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// `bd config get`/`set`/`set-many`/`unset` read and write beads.role
+			// with inherited Git routing scrubbed, including GIT_CONFIG_GLOBAL.
+			// Those four subcommands are the whole claim: the readers that
+			// *decide* maintainer-vs-contributor (internal/routing,
+			// beads.RepoContext.Role, bd doctor's role check, and bd config
+			// show, which is itself an unscrubbed bd config read) are still
+			// unscrubbed, so this is not a guarantee that inherited routing
+			// cannot flip the role bd acts on. Hardening those readers lands
+			// separately (#6461).
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {

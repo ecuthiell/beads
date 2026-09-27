@@ -77,7 +77,9 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}{
 		{"malformed_config", "beads.role", 128},
 		{"invalid_key", "invalid", 1},
-		{"invalid_routing_boolean", "beads.role", 128},
+		// Role reads scrub inherited Git routing, and GIT_CONFIG* is routing, so
+		// a poisoned routing boolean can only reach a key that still inherits it.
+		{"invalid_routing_boolean", "test.marker", 128},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -102,7 +104,16 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			if tc.name != "invalid_key" {
+			switch tc.name {
+			case "invalid_key":
+			case "invalid_routing_boolean":
+				// The poisoned routing value cannot reach a role read, so it stays
+				// a plain absent lookup rather than becoming a read failure.
+				role, found, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(roleErr)
+				s.False(found)
+				s.Empty(role)
+			default:
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
@@ -455,8 +466,10 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
-				require.False(t, found, "generic role reads still use the current caller environment")
+				// The changed HOME is visible to the generic reader, and its broken
+				// .gitconfig surfaces as a read failure rather than absence.
+				require.Error(t, err, "generic role reads still use the current caller environment")
+				require.False(t, found)
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
 				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))

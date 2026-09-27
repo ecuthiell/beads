@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -474,12 +475,105 @@ func TestStandaloneHookCommandsUseSelectedContext(t *testing.T) {
 			require.ErrorAs(t, query.Run(), &exit)
 			require.Equal(t, 1, exit.ExitCode(), "selected local role must be absent")
 			if name == "beads" {
-				got := initExcludeGit(t, cwd, "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
-				require.True(t, utils.PathsEqual(destination, got), "outside-storage predicate remains conservative")
+				// The value install wrote is the out-of-repo <BEADS_DIR>/hooks
+				// directory whose hook files uninstall just deleted. Leaving it
+				// configured keeps .git/hooks shadowed by an emptied directory,
+				// i.e. every hook silently disabled while beads-managed config is
+				// still installed — the GH#4440 contract this command enforces.
+				pathQuery := exec.Command("git", "--git-dir", common, "config", "--local", "--get", "core.hooksPath")
+				pathQuery.Dir, pathQuery.Env = cwd, gitenv.ScrubRouting(os.Environ())
+				var pathExit *exec.ExitError
+				require.ErrorAs(t, pathQuery.Run(), &pathExit)
+				require.Equal(t, 1, pathExit.ExitCode(), "out-of-storage hooks path must be cleared, not left behind")
 			}
 			require.True(t, utils.PathsEqual(decoy, git.GetRepoRoot()), "fresh commands must leave the legacy cache untouched")
 		})
 	}
+}
+
+// TestStandaloneBeadsUninstallLeavesHooksPathWhenResolutionDrifts records an
+// accepted limitation, not a desired behavior. The shared predicate recognizes the
+// directory `bd hooks install --beads` would configure *right now*
+// (doctor.BeadsManagedStorageHooksDir -> beads.FindBeadsDir), not the value install
+// actually wrote, and every FindBeadsDir arm reads live inputs: BEADS_DIR, the
+// .beads/redirect contents, storage existence plus project files, and the process
+// cwd. core.hooksPath lives in the shared common dir, so an installing shell with
+// BEADS_DIR set and an uninstalling shell without it see the same configured value
+// and resolve different storage. Uninstall then deletes the hook files and leaves
+// core.hooksPath pointing at the emptied directory — .git/hooks stays shadowed,
+// which is the GH#4440 shape the clearance exists to prevent.
+//
+// Tracked in bd-s76jm: record what install configured (a local beads.hooksPath key)
+// and match the record, with the current recomputation as the fallback. When that
+// lands this expectation flips to "cleared" and this test becomes its
+// counterfactual.
+func TestStandaloneBeadsUninstallLeavesHooksPathWhenResolutionDrifts(t *testing.T) {
+	selected, decoy, storage, common := newInitHooksFixture(t)
+	require.True(t, utils.PathsEqual(decoy, git.GetRepoRoot()), "seed stale decoy cache")
+	mainRoot := filepath.Dir(common)
+	private := initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir")
+	t.Chdir(decoy)
+	t.Setenv("GIT_DIR", private)
+	t.Setenv("GIT_WORK_TREE", selected)
+	t.Setenv("BEADS_DIR", storage)
+	require.NoError(t, os.WriteFile(filepath.Join(storage, "metadata.json"), []byte("{}\n"), 0600))
+	destination := filepath.Join(storage, "hooks")
+	initExcludeGit(t, decoy, "--git-dir", common, "config", "--local", "core.hooksPath",
+		filepath.Join(mainRoot, ".beads", "hooks"))
+	setStandaloneHookMode(t, "beads")
+	require.NoError(t, hooksInstallCmd.RunE(hooksInstallCmd, nil))
+	require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
+	require.True(t, utils.PathsEqual(destination, readSelectedHooksPath(t, decoy, common)),
+		"install must configure the out-of-repo storage hooks directory")
+
+	// Same repository and same configured value; only the resolution inputs move.
+	require.NoError(t, os.Unsetenv("BEADS_DIR"))
+	require.NotEqual(t, destination, doctor.BeadsManagedStorageHooksDir(),
+		"precondition: cleanup must no longer re-derive the value install wrote")
+
+	require.NoError(t, hooksUninstallCmd.RunE(hooksUninstallCmd, nil))
+	_, err := os.Stat(filepath.Join(destination, "pre-commit"))
+	require.ErrorIs(t, err, os.ErrNotExist, "uninstall still deletes the hook files it can no longer recognize")
+	require.True(t, utils.PathsEqual(destination, readSelectedHooksPath(t, decoy, common)),
+		"known gap (bd-s76jm): the configured value survives an install/uninstall resolution drift")
+}
+
+// readSelectedHooksPath returns the selected repository's local core.hooksPath,
+// read through the common dir with routing overrides dropped, exactly as
+// resetHooksPathAt reads it.
+func readSelectedHooksPath(t *testing.T, workDir, commonDir string) string {
+	t.Helper()
+	return initExcludeGit(t, workDir, "--git-dir", commonDir, "config", "--local", "--get", "core.hooksPath")
+}
+
+// TestStandaloneHooksWarnOnEffectivePathDivergence pins the warning that names
+// both hook paths when they disagree. install/uninstall act on the selected,
+// config-scrubbed directory, while every status and execution reader
+// (bd hooks list, bd doctor, runChainedHook) still resolves hooks through the
+// inherited context — and git itself honors the inherited core.hooksPath. A
+// bare success would leave the user comparing an install that reported one
+// directory against a status that reports another, with nothing saying why.
+func TestStandaloneHooksWarnOnEffectivePathDivergence(t *testing.T) {
+	selected, decoy, _, common := newInitHooksFixture(t)
+	mainRoot := filepath.Dir(common)
+	private := initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir")
+	t.Chdir(decoy)
+	t.Setenv("GIT_DIR", private)
+	t.Setenv("GIT_WORK_TREE", selected)
+	destination := filepath.Join(mainRoot, ".beads", "hooks")
+	initExcludeGit(t, decoy, "--git-dir", common, "config", "--local", "core.hooksPath", destination)
+	injected := filepath.Join(decoy, ".git", "hooks")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_0", injected)
+	setStandaloneHookMode(t, "")
+
+	var err error
+	stderr := captureStderr(t, func() { err = hooksInstallCmd.RunE(hooksInstallCmd, nil) })
+	require.NoError(t, err)
+	require.Contains(t, stderr, injected, "warning must name the effective inherited hooks directory")
+	require.Contains(t, stderr, destination, "warning must name the selected directory bd operated on")
+	require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
 }
 
 func TestInitHooksPreservesManagedDirectoryAliases(t *testing.T) {
