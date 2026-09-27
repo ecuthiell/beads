@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Identity lookup ignores inherited Git routing** ([#6787](https://github.com/gastownhall/beads/issues/6787)).
+  The Git-name fallback in `internal/config.GetIdentity` no longer uses
+  `GIT_CONFIG_GLOBAL` or inline `GIT_CONFIG_*` overrides. A harness that supplied
+  `user.name` through those overrides can now resolve the ordinary repository or
+  global Git name instead, including the host user's name. Set `BEADS_IDENTITY`
+  explicitly when a caller of this helper needs a controlled identity:
+
+  ```bash
+  # Before: relying on this redirected Git configuration to supply user.name.
+  GIT_CONFIG_GLOBAL=/path/to/harness.gitconfig ./identity-harness
+  # After: choose the identity directly; it takes precedence over the Git lookup.
+  BEADS_IDENTITY=test-agent ./identity-harness
+  ```
+
+  An explicit identity argument still wins, followed by `BEADS_IDENTITY` or the
+  `identity` configuration setting, then the Git name, then the hostname. This
+  note covers the helper contract; the current CLI has no production callers of
+  `GetIdentity`.
+
 ### Fixed
 
 - **`bd close` now exits non-zero when any issue in a batch fails to close**
