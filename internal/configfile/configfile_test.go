@@ -158,9 +158,9 @@ func TestDatabasePath_Dolt(t *testing.T) {
 	})
 
 	t.Run("absolute path is honored", func(t *testing.T) {
-		cfg := &Config{Database: "/custom/path/dolt", Backend: BackendDolt}
+		want := filepath.Join(t.TempDir(), "custom", "path", "dolt")
+		cfg := &Config{Database: want, Backend: BackendDolt}
 		got := cfg.DatabasePath(beadsDir)
-		want := "/custom/path/dolt"
 		if got != want {
 			t.Errorf("DatabasePath() = %q, want %q", got, want)
 		}
@@ -949,9 +949,10 @@ func TestProxiedServerClientInfo_ResolvedPaths(t *testing.T) {
 	})
 
 	t.Run("absolute returned as-is", func(t *testing.T) {
-		info := &ProxiedServerClientInfo{RootPath: "/srv/abs"}
-		if got := info.ResolvedRootPath(beadsDir); got != "/srv/abs" {
-			t.Errorf("ResolvedRootPath = %q, want absolute as-is", got)
+		want := filepath.Join(t.TempDir(), "abs")
+		info := &ProxiedServerClientInfo{RootPath: want}
+		if got := info.ResolvedRootPath(beadsDir); got != want {
+			t.Errorf("ResolvedRootPath = %q, want %q", got, want)
 		}
 	})
 
