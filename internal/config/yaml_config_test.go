@@ -273,26 +273,6 @@ func TestFormatYamlValue(t *testing.T) {
 	}
 }
 
-func TestNormalizeYamlKey(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"no-db", "no-db"},               // no alias, unchanged
-		{"json", "json"},                 // no alias, unchanged
-		{"routing.mode", "routing.mode"}, // no alias for this one
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := normalizeYamlKey(tt.input)
-			if got != tt.expected {
-				t.Errorf("normalizeYamlKey(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestSetYamlConfig(t *testing.T) {
 	oldBeadsDir := os.Getenv("BEADS_DIR")
 	if err := os.Unsetenv("BEADS_DIR"); err != nil {
@@ -406,6 +386,157 @@ func TestSetYamlConfigInDir_WritesTargetConfigDespiteLocalStub(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(worktreeDir, ".beads", "config.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("expected worktree stub to remain untouched, got err=%v", err)
+	}
+}
+
+func TestWorkspaceYamlValueStrictDistinguishesMissingAndMalformed(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if value, present, err := WorkspaceYamlValueStrict(beadsDir, "dolt.shared-server"); err != nil || present || value != "" {
+		t.Fatalf("missing config = (%q, %v, %v), want empty/false/nil", value, present, err)
+	}
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := WorkspaceYamlValueStrict(beadsDir, "dolt.shared-server"); err == nil {
+		t.Fatal("malformed config should return an error")
+	}
+}
+
+func TestWorkspaceYamlValueStrictReadsNestedScalar(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("dolt:\n  shared-server: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, present, err := WorkspaceYamlValueStrict(beadsDir, "dolt.shared-server")
+	if err != nil || !present || value != "false" {
+		t.Fatalf("nested scalar = (%q, %v, %v), want false/true/nil", value, present, err)
+	}
+}
+
+// TestWorkspaceYamlValueStrictWithLocalMirrorsInitializeMergeOrder pins the one
+// thing the layered reader exists for: it must answer the way the merged
+// singleton does, and Initialize merges config.local.yaml LAST, so the
+// local file wins. A workspace-scoped reader that saw only config.yaml would
+// diverge from every config.GetBool consumer for the ordinary shape of a tracked
+// config.yaml plus a machine-local override.
+func TestWorkspaceYamlValueStrictWithLocalMirrorsInitializeMergeOrder(t *testing.T) {
+	write := func(t *testing.T, beadsDir, name, body string) {
+		t.Helper()
+		if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("local overrides tracked", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  shared-server: true\n")
+		write(t, beadsDir, LocalConfigFileName, "dolt:\n  shared-server: false\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || !present || value != "false" {
+			t.Fatalf("= (%q, %v, %v), want the config.local.yaml answer \"false\"/true/nil", value, present, err)
+		}
+	})
+
+	t.Run("local overrides tracked in the enabling direction", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  shared-server: false\n")
+		write(t, beadsDir, LocalConfigFileName, "dolt:\n  shared-server: true\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || !present || value != "true" {
+			t.Fatalf("= (%q, %v, %v), want the config.local.yaml answer \"true\"/true/nil", value, present, err)
+		}
+	})
+
+	// MergeInConfig only overrides the keys the local file actually states, so a
+	// local file that is silent about this key must fall through rather than
+	// mask the tracked answer.
+	t.Run("local silent on the key falls through", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  shared-server: true\n")
+		write(t, beadsDir, LocalConfigFileName, "dolt:\n  auto-start: false\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || !present || value != "true" {
+			t.Fatalf("= (%q, %v, %v), want the config.yaml answer \"true\"/true/nil", value, present, err)
+		}
+	})
+
+	t.Run("no local file at all", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  shared-server: true\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || !present || value != "true" {
+			t.Fatalf("= (%q, %v, %v), want the config.yaml answer \"true\"/true/nil", value, present, err)
+		}
+	})
+
+	// The mirror of the case above, and the corner where being MORE permissive
+	// than Initialize would reopen the divergence: Initialize hangs its local
+	// merge off a project config.yaml it found, so a .beads holding only
+	// config.local.yaml is never merged and config.GetBool answers from
+	// defaults. This reader has to say "absent" too, or it becomes the one
+	// resolver in the tree that honors that file.
+	t.Run("local only, no tracked config.yaml", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, LocalConfigFileName, "dolt:\n  shared-server: true\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || present || value != "" {
+			t.Fatalf("= (%q, %v, %v), want empty/false/nil: Initialize does not merge a config.local.yaml with no config.yaml beside it", value, present, err)
+		}
+	})
+
+	t.Run("neither file states the key", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  auto-start: false\n")
+		value, present, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server")
+		if err != nil || present || value != "" {
+			t.Fatalf("= (%q, %v, %v), want empty/false/nil", value, present, err)
+		}
+	})
+
+	// Initialize fails outright on a config.local.yaml it cannot merge, so the
+	// strict contract has to apply to the local layer too rather than skipping
+	// it and quietly answering from the tracked file.
+	t.Run("malformed local is an error, not a fallthrough", func(t *testing.T) {
+		beadsDir := filepath.Join(t.TempDir(), ".beads")
+		write(t, beadsDir, ProjectConfigFileName, "dolt:\n  shared-server: true\n")
+		write(t, beadsDir, LocalConfigFileName, "dolt: [")
+		if _, _, err := WorkspaceYamlValueStrictWithLocal(beadsDir, "dolt.shared-server"); err == nil {
+			t.Fatal("malformed config.local.yaml should return an error")
+		} else if !strings.Contains(err.Error(), LocalConfigFileName) {
+			t.Fatalf("error should name the file that failed, got: %v", err)
+		}
+	})
+
+	t.Run("empty beadsDir", func(t *testing.T) {
+		if value, present, err := WorkspaceYamlValueStrictWithLocal("", "dolt.shared-server"); err != nil || present || value != "" {
+			t.Fatalf("= (%q, %v, %v), want empty/false/nil", value, present, err)
+		}
+	})
+}
+
+func TestWorkspaceYamlValueStrictRejectsNullAndWrongParent(t *testing.T) {
+	for _, body := range []string{"dolt:\n  shared-server: null\n", "dolt: false\n", "dolt: []\n"} {
+		t.Run(strings.ReplaceAll(body, "\n", "_"), func(t *testing.T) {
+			beadsDir := filepath.Join(t.TempDir(), ".beads")
+			if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := WorkspaceYamlValueStrict(beadsDir, "dolt.shared-server"); err == nil {
+				t.Fatalf("config %q should be rejected", body)
+			}
+		})
 	}
 }
 
@@ -1008,7 +1139,10 @@ func TestCommentOutYamlKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := commentOutYamlKey(tt.content, tt.key)
+			got, err := commentOutYamlKey(tt.content, tt.key)
+			if err != nil {
+				t.Fatalf("commentOutYamlKey() error = %v", err)
+			}
 			if got != tt.expected {
 				t.Errorf("commentOutYamlKey() =\n%q\nwant:\n%q", got, tt.expected)
 			}
