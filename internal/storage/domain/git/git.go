@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/execenv"
 	internalgit "github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/domain"
@@ -24,12 +26,45 @@ func NewGitRepository(workDir string) domain.GitRepository {
 // beads.role reads and writes re-scrub this captured environment for config
 // suppression as well; see roleAuthorityEnv for why that is not optional here.
 func NewInitGitRepository(workDir string) domain.GitRepository {
-	return &gitRepositoryImpl{workDir: workDir, env: gitenv.ScrubRouting(os.Environ())}
+	env := os.Environ()
+	return &gitRepositoryImpl{
+		workDir:            workDir,
+		env:                gitenv.ScrubRouting(env),
+		commitIdentityArgs: initCommitIdentityArgs(env),
+	}
 }
 
 type gitRepositoryImpl struct {
-	workDir string
-	env     []string
+	workDir            string
+	env                []string
+	commitIdentityArgs []string
+}
+
+// initCommitIdentityArgs retains only the inline identity settings needed by
+// artifact commits. Other commands, including role reads/writes, keep the scrubbed
+// environment. Git still owns author/committer configuration and env precedence.
+func initCommitIdentityArgs(env []string) []string {
+	countText, _ := execenv.Lookup(env, "GIT_CONFIG_COUNT")
+	count, err := strconv.Atoi(countText)
+	// A complete table needs a key and value entry for every index. Bound the
+	// lookup work by the supplied environment, including for malformed counts.
+	if err != nil || count < 0 || count > len(env)/2 {
+		return nil
+	}
+	var args []string
+	for i := 0; i < count; i++ {
+		suffix := strconv.Itoa(i)
+		key, hasKey := execenv.Lookup(env, "GIT_CONFIG_KEY_"+suffix)
+		value, hasValue := execenv.Lookup(env, "GIT_CONFIG_VALUE_"+suffix)
+		if !hasKey || !hasValue {
+			return nil // Incomplete tables retain the previous scrubbed behavior.
+		}
+		key = strings.ToLower(key)
+		if key == "user.name" || key == "user.email" {
+			args = append(args, "-c", key+"="+value)
+		}
+	}
+	return args
 }
 
 var _ domain.GitRepository = (*gitRepositoryImpl)(nil)
@@ -242,7 +277,7 @@ func (r *gitRepositoryImpl) Commit(ctx context.Context, params domain.GitCommitP
 	if params.Message == "" {
 		return domain.GitCommitResult{}, fmt.Errorf("git: Commit: Message must not be empty")
 	}
-	args := []string{}
+	args := append([]string(nil), r.commitIdentityArgs...)
 	if params.SkipHooks {
 		args = append(args, "-c", "core.hooksPath=")
 	}
