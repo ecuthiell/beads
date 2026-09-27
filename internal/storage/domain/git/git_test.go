@@ -72,14 +72,17 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	original, err := os.ReadFile(configPath)
 	s.Require().NoError(err)
 	for _, tc := range []struct {
-		name, key string
-		exitCode  int
+		name, key     string
+		exitCode      int
+		roleReadFails bool
 	}{
-		{"malformed_config", "beads.role", 128},
-		{"invalid_key", "invalid", 1},
-		// Role reads scrub inherited Git routing, and GIT_CONFIG* is routing, so
-		// a poisoned routing boolean can only reach a key that still inherits it.
-		{"invalid_routing_boolean", "test.marker", 128},
+		{"malformed_config", "beads.role", 128, true},
+		{"invalid_key", "invalid", 1, false},
+		// A beads.role read scrubs inherited config suppression, so a bad
+		// GIT_CONFIG_NOSYSTEM value never reaches that one key. Read a key that
+		// still inherits it, so the env-borne failure stays covered, and pin the
+		// role read's immunity below rather than dropping the case.
+		{"invalid_routing_boolean", "core.bare", 128, false},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -104,19 +107,26 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			switch tc.name {
-			case "invalid_key":
-			case "invalid_routing_boolean":
-				// The poisoned routing value cannot reach a role read, so it stays
-				// a plain absent lookup rather than becoming a read failure.
-				role, found, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
-				s.Require().NoError(roleErr)
-				s.False(found)
-				s.Empty(role)
-			default:
+			if tc.roleReadFails {
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
+			} else if tc.name == "invalid_routing_boolean" {
+				_, found, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(roleErr)
+				s.False(found)
+			}
+			if tc.name == "invalid_routing_boolean" {
+				// The same poison that fails the read above cannot reach beads.role,
+				// which resolves as absent rather than as a preserved read failure.
+				role, roleFound, roleErr := s.repo.GetConfig(s.Ctx(), "beads.role")
+				s.Require().NoError(roleErr)
+				s.False(roleFound)
+				s.Empty(role)
+				useCaseRole, useCaseFound, useCaseErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(useCaseErr)
+				s.False(useCaseFound)
+				s.Empty(useCaseRole)
 			}
 		})
 	}
@@ -466,9 +476,12 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				// The changed HOME is visible to the generic reader, and its broken
-				// .gitconfig surfaces as a read failure rather than absence.
+				// changedHome is the only HOME here holding a .gitconfig, so Git's
+				// refusal to parse that file is what proves the generic reader used
+				// the current caller environment rather than a captured one. The
+				// reader surfaces such read failures instead of reporting absence.
 				require.Error(t, err, "generic role reads still use the current caller environment")
+				require.ErrorContains(t, err, ".gitconfig")
 				require.False(t, found)
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
@@ -478,6 +491,62 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 				require.True(t, found)
 				require.Equal(t, "contributor", role, "role reads and writes share the constructor's captured HOME")
 			}
+		})
+	}
+}
+
+// TestInitGitRepositoryRoleIgnoresInheritedConfigSuppression pins the role
+// boundary on the environment the production path actually carries. cmd/bd's
+// proxied init tail always rebinds the use case to NewInitGitRepository
+// (cmd/bd/init_proxied_server.go), so the *captured* environment — not
+// os.Environ() — is the one a beads.role lookup has to be strict about. An
+// inherited GIT_CONFIG_GLOBAL=/dev/null that survives into that capture blinds
+// the read, and the tail answers a missing role by writing "maintainer" into
+// repository-local config, where it outranks the global value from then on. A
+// guard keyed on the environment's provenance would therefore be dead exactly
+// where the escalation happens.
+//
+// Only the global-file vector is observable end to end here, for the reasons
+// internal/routing's counterpart test records: repository config is never
+// suppressed by these variables, and GIT_CONFIG_SYSTEM=<path> is itself
+// scrubbed. The remaining forms are pinned in gitenv's suppression table.
+func TestInitGitRepositoryRoleIgnoresInheritedConfigSuppression(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home, target := t.TempDir(), t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[beads]\n\trole = contributor\n"), 0600))
+	// No local role in the target: the global file is the only place the answer
+	// can come from, so blinding it is visible as a miss.
+	initCmd := exec.Command("git", "init", "--quiet")
+	initCmd.Dir, initCmd.Env = target, gitenv.ScrubRouting(os.Environ())
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "fixture git init: %s", out)
+
+	for _, tc := range []struct{ name, blind string }{
+		// Fixture guard: the global role must be readable at all, otherwise the
+		// blinded case below would pass for the wrong reason.
+		{"unblinded", ""},
+		{"global_null", os.DevNull},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.blind != "" {
+				t.Setenv("GIT_CONFIG_GLOBAL", tc.blind)
+			}
+			// Constructed inside the subtest: the constructor captures the
+			// environment, so the suppression entry has to be present first.
+			useCase := domain.NewGitUseCase(target, NewInitGitRepository(target))
+			role, found, err := useCase.BeadsRole(t.Context())
+			require.NoError(t, err)
+			require.True(t, found, "a blinded role read makes the init tail persist a maintainer default")
+			require.Equal(t, "contributor", role)
 		})
 	}
 }

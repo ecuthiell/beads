@@ -1577,6 +1577,13 @@ func resetHooksPathIfBeadsManaged() error {
 }
 
 func resetHooksPathAt(repoRoot, commonDir, storageHooksDir string, configEnv []string) error {
+	// beads.role is an authority value, unlike core.hooksPath, so its own
+	// commands drop inherited suppression too (see the role pair below).
+	// Scrubbing suppression from configEnv rather than os.Environ() leaves a
+	// caller's captured environment otherwise intact. Suppression controls are
+	// themselves routing keys, so for a configEnv that ScrubRouting already
+	// produced the two spellings drop exactly the same entries.
+	roleConfigEnv := gitenv.ScrubRoutingAndSuppression(configEnv)
 	var failures []string
 
 	cmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "core.hooksPath")
@@ -1614,13 +1621,18 @@ func resetHooksPathAt(repoRoot, commonDir, storageHooksDir string, configEnv []s
 	// Keep the selected main/common config, including bare repositories with an
 	// external worktree, while dropping routing overrides from both commands.
 	// The presence query must use the same local scope as the unset.
+	//
+	// Both role commands additionally discard the explicit config suppression
+	// ScrubRouting keeps: beads.role is an authority value whose absence reads
+	// as maintainer, so a suppressed config file would report a clean uninstall
+	// while leaving the key set here.
 	getRoleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
-	getRoleCmd.Env = configEnv
+	getRoleCmd.Env = roleConfigEnv
 	if out, err := getRoleCmd.CombinedOutput(); err == nil {
 		roleCmd := exec.Command("git", "--git-dir", commonDir, "config", "--local", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
-		roleCmd.Env = configEnv
+		roleCmd.Env = roleConfigEnv
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}
