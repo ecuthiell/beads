@@ -116,6 +116,16 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 				s.Require().NoError(roleErr)
 				s.False(found)
 			}
+			if tc.name == "invalid_routing_boolean" {
+				// The same poison that fails the read above cannot reach beads.role,
+				// which resolves as absent rather than as a preserved read failure.
+				role, roleFound, roleErr := s.repo.GetConfig(s.Ctx(), "beads.role")
+				s.Require().NoError(roleErr)
+				s.False(roleFound)
+				s.Empty(role)
+				_, _, useCaseErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(useCaseErr)
+			}
 		})
 	}
 }

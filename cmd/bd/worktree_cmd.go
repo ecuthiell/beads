@@ -710,7 +710,11 @@ func worktreeGitEnvKey(entry string) string {
 // clearWorktreeGitRoutingEnv establishes the command working directory as the
 // repository-selection boundary without changing process identity or signal
 // semantics. Startup config discovery applies the same boundary to its one
-// pre-hook Git probe.
+// pre-hook Git probe, and the .beads discovery probes that run against an
+// already selected path share it too (beads.selectedBeadsGitOutput and
+// ResolveBeadsDirForRepo). The generic internal/beads gitOutput probes and
+// internal/git/gitdir.go still honor inherited routing, so those planes can
+// still resolve a different repository than this one (bd-p4che).
 //
 // The boundary removes inherited discovery *redirects*. It is not a floor:
 // GIT_CEILING_DIRECTORIES is a routing key too, so dropping it also re-enables
