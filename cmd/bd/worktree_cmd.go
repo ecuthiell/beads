@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/execenv"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -698,10 +699,18 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 	// ScrubRoutingForOS returns a fresh slice, so filtering it in place is safe.
 	result := cleaned[:0]
 	for _, entry := range cleaned {
-		key := normalizeWorktreeGitEnvKey(worktreeGitEnvKey(entry), goos)
-		if key == "GIT_NO_REPLACE_OBJECTS" || key == "GIT_OPTIONAL_LOCKS" {
+		key := worktreeGitEnvKey(entry)
+		// Key identity is the subprocess lookup rule (execenv), not ToUpper.
+		// The two disagree in both directions for non-ASCII keys on Windows:
+		// ToUpper leaves GİT_OPTIONAL_LOCKS unmatched although Git honors it,
+		// and folds GIT_OPTIONAL_LOCKſ onto the literal although os/exec keeps
+		// it distinct.
+		if execenv.KeyEqualForOS(key, "GIT_NO_REPLACE_OBJECTS", goos) ||
+			execenv.KeyEqualForOS(key, "GIT_OPTIONAL_LOCKS", goos) {
 			continue
 		}
+		// IsFenceKeyForOS applies that same subprocess key identity internally,
+		// so the raw key is the right argument here.
 		if gitenv.IsFenceKeyForOS(key, goos) {
 			continue
 		}
@@ -712,13 +721,6 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 
 func worktreeGitEnvKey(entry string) string {
 	return gitenv.EntryKey(entry)
-}
-
-func normalizeWorktreeGitEnvKey(key, goos string) string {
-	if goos == "windows" {
-		return strings.ToUpper(key)
-	}
-	return key
 }
 
 // clearWorktreeGitRoutingEnv establishes the command working directory as the
