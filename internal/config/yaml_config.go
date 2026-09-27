@@ -181,13 +181,29 @@ func IsSecretKey(key string) bool {
 
 // isGitTracked returns true if the file at path is tracked by git
 // (i.e., has been git-added). Uses `git ls-files --error-unmatch`.
+//
+// The containing repository is probed first, with the inherited Git context as
+// a fallback — the same two-probe shape as cmd/bd's gitTrackedFileContextWithEnv.
+// Scrubbing first stops a decoy GIT_DIR from hiding a tracked config file; the
+// fallback preserves checkouts that are legitimately reachable only through
+// inherited routing (a bare work tree, a `git --git-dir` wrapper, a hook
+// context), where a scrubbed probe finds no repository at all. Either index
+// proving the file tracked is enough. Both probes failing counts as untracked,
+// so a lost probe is a secret written into a tracked file, not a false refusal.
 func isGitTracked(path string) bool {
-	cmd := exec.Command("git", "ls-files", "--error-unmatch", path)
-	cmd.Dir = filepath.Dir(path)
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	dir := filepath.Dir(path)
+	inherited := os.Environ()
+	for _, env := range [][]string{gitenv.ScrubRouting(inherited), inherited} {
+		cmd := exec.Command("git", "ls-files", "--error-unmatch", path)
+		cmd.Dir = dir
+		cmd.Env = env
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 var secretKeyEnvVarHints = map[string]string{ //nolint:gosec // Values are environment variable names, not credentials.

@@ -53,6 +53,13 @@ func EntryKey(entry string) string {
 // working directory or alter its repository, index, object, namespace,
 // executable, template, or config authority. Environment names follow host
 // semantics: byte-exact on POSIX and case-insensitive on Windows.
+//
+// GIT_CEILING_DIRECTORIES is a member even though it limits discovery rather
+// than redirecting it: scrubbing it *widens* the upward search, so discovery can
+// reach a containing parent repository the inherited ceiling excluded. That is
+// the intended trade, and pinning an explicit working directory does not opt out
+// of it: -C or cmd.Dir fixes where the search starts, not where it stops, so
+// once the ceiling is gone the walk above that directory is unbounded.
 func IsRoutingKeyForOS(key, goos string) bool {
 	keys := routingKeys
 	prefix := "GIT_CONFIG"

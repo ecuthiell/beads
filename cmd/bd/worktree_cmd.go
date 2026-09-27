@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/execenv"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
@@ -687,8 +688,12 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 	// ScrubRoutingForOS returns a fresh slice, so filtering it in place is safe.
 	result := cleaned[:0]
 	for _, entry := range cleaned {
-		key := normalizeWorktreeGitEnvKey(worktreeGitEnvKey(entry), goos)
-		if key == "GIT_NO_REPLACE_OBJECTS" || key == "GIT_OPTIONAL_LOCKS" {
+		// One shared subprocess key identity. execenv mirrors os/exec's fold, so
+		// this drops exactly the entries a child process would treat as these two
+		// variables -- an independent fold here would diverge from that rule.
+		key := worktreeGitEnvKey(entry)
+		if execenv.KeyEqualForOS(key, "GIT_NO_REPLACE_OBJECTS", goos) ||
+			execenv.KeyEqualForOS(key, "GIT_OPTIONAL_LOCKS", goos) {
 			continue
 		}
 		result = append(result, entry)
@@ -698,13 +703,6 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 
 func worktreeGitEnvKey(entry string) string {
 	return gitenv.EntryKey(entry)
-}
-
-func normalizeWorktreeGitEnvKey(key, goos string) string {
-	if goos == "windows" {
-		return strings.ToUpper(key)
-	}
-	return key
 }
 
 // clearWorktreeGitRoutingEnv establishes the command working directory as the

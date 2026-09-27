@@ -527,6 +527,10 @@ func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
 				require.ErrorContains(t, err, want)
 				if name == "captured_fallback" {
 					require.ErrorContains(t, err, "tracked by git (inherited Git index)")
+					// The remediation follows the proof: `git rm --cached` from the
+					// operator's shell aims at whichever index that shell routes to,
+					// so the inherited case has to name clearing the routing instead.
+					require.ErrorContains(t, err, "Clear the inherited Git routing environment and re-run")
 					for _, entry := range hooks.inheritedEnv {
 						if strings.HasPrefix(entry, "GIT_DIR=") {
 							require.NotContains(t, err.Error(), strings.TrimPrefix(entry, "GIT_DIR="))
@@ -534,6 +538,8 @@ func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
 					}
 				} else if name == "tracked" {
 					require.ErrorContains(t, err, "tracked by git (containing repository index)")
+					require.ErrorContains(t, err, "Untrack it (git rm --cached) or move hooks to an untracked directory")
+					require.NotContains(t, err.Error(), "Clear the inherited Git routing environment")
 				}
 				require.Equal(t, content, string(readInitHooksFile(t, hook)))
 				for _, other := range []string{"post-merge", "pre-commit.backup"} {

@@ -574,11 +574,26 @@ func TestProxiedInitExcludeUsesSelectedDirectory(t *testing.T) {
 }
 
 func TestProxiedInitHooksUseSelectedContext(t *testing.T) {
-	for _, name := range []string{"normal", "missing", "outdated", "current", "skip", "nonrepo", "pure_jj", "colocated", "config_lock", "quiet_config_lock"} {
+	for _, name := range []string{"normal", "missing", "outdated", "current", "skip", "nonrepo", "pure_jj", "colocated", "bare", "git_dir_cwd", "config_lock", "quiet_config_lock"} {
 		t.Run(name, func(t *testing.T) {
 			selected, decoy, storage, common := newInitHooksFixture(t)
+			// Repository shapes whose common directory resolves while no work tree
+			// does; both must still install, as bd did before the hooks resolver.
+			workTreeless := name == "bare" || name == "git_dir_cwd"
 			if name == "normal" {
 				selected = filepath.Dir(common)
+			}
+			if name == "bare" {
+				selected = t.TempDir()
+				initExcludeGit(t, selected, "init", "--bare", "--quiet")
+			}
+			if name == "git_dir_cwd" {
+				// Standing in a non-bare repository's own .git directory: rev-parse
+				// --git-dir answers, so the repository arm runs, but --show-toplevel
+				// fails and --is-bare-repository reports false.
+				repo := t.TempDir()
+				initExcludeGit(t, repo, "init", "--quiet")
+				selected = filepath.Join(repo, ".git")
 			}
 			current, ambient := t.TempDir(), t.TempDir()
 			initExcludeGit(t, selected, "config", "core.hooksPath", current)
@@ -636,7 +651,7 @@ func TestProxiedInitHooksUseSelectedContext(t *testing.T) {
 				require.Empty(t, stderr)
 			}
 			require.NotContains(t, stderr, "Failed to resolve git hooks")
-			wantInstall := name == "normal" || name == "missing" || name == "outdated" || name == "colocated" || locked || (name == "current" && !currentReady)
+			wantInstall := name == "normal" || name == "missing" || name == "outdated" || name == "colocated" || workTreeless || locked || (name == "current" && !currentReady)
 			path := filepath.Join(storage, "hooks", "pre-commit")
 			if name == "colocated" {
 				path = filepath.Join(current, "pre-commit")
@@ -647,8 +662,18 @@ func TestProxiedInitHooksUseSelectedContext(t *testing.T) {
 				_, err := os.Stat(path)
 				require.ErrorIs(t, err, os.ErrNotExist, "ambient status must not trigger an install")
 			}
+			if workTreeless {
+				// These resolve through the work-tree-less hooks context, so the
+				// install must still land in the selected storage and configure the
+				// selected repository -- not the inherited one this fixture routes to.
+				require.Equal(t, filepath.Join(storage, "hooks"), initExcludeGit(t, selected, "config", "--local", "--get", "core.hooksPath"))
+			}
 			if name != "nonrepo" && name != "pure_jj" {
-				exclude := readInitHooksFile(t, filepath.Join(common, "info", "exclude"))
+				excludeRoot := common
+				if workTreeless {
+					excludeRoot = selected // a work-tree-less selection is its own common directory
+				}
+				exclude := readInitHooksFile(t, filepath.Join(excludeRoot, "info", "exclude"))
 				require.Contains(t, string(exclude), ".beads/", "selected exclude callback lost")
 			}
 			for path, before := range preserved {

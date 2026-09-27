@@ -199,7 +199,22 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// Some beads.role paths scrub inherited Git routing, including
+			// GIT_CONFIG_*, so they use the key the selected repository holds
+			// rather than one an inherited config supplies. Those paths
+			// include bd config set/get/unset/set-many beads.role (the write
+			// below is the set case) and the proxied-init role tail, which
+			// goes through domain.GitUseCase.BeadsRole/SetBeadsRole and is
+			// scrubbed on both of that repository's constructor arms. A path
+			// that does not scrub still goes through the inherited
+			// environment; such readers include internal/routing's
+			// roleFromGitConfig, RepoContext.Role, doctor's CheckBeadsRole,
+			// bd config show, and init's getBeadsRole, and such writers
+			// include init's setBeadsRole safety net, bd init --contributor,
+			// and bd hooks --uninstall, which also reads the key before
+			// unsetting it. So an inherited override can disagree with the
+			// value written below, and bd config set beads.role and bd init
+			// can land the key in two different repositories.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {

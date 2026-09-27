@@ -383,6 +383,56 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
+// TestRoleConfigKeySpellingTakesScrubbedPath pins the case-insensitive key
+// match. Git resolves config key names case-insensitively, so every spelling of
+// beads.role must take the scrubbed path; a byte-exact compare would let
+// "Beads.Role" read and write whichever repository inherited routing selects.
+func TestRoleConfigKeySpellingTakesScrubbedPath(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home := t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	runGit := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "fixture git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	// The canonical spelling is the control: it takes the scrubbed path under
+	// either comparator, so it proves the fixture routes as intended rather than
+	// the assertions passing vacuously.
+	for _, key := range []string{"beads.role", "Beads.Role", "BEADS.ROLE"} {
+		t.Run(key, func(t *testing.T) {
+			target, decoy := t.TempDir(), t.TempDir()
+			for _, dir := range []string{target, decoy} {
+				runGit(t, dir, "init", "--quiet")
+			}
+			runGit(t, target, "config", "--local", "beads.role", "target-role")
+			runGit(t, decoy, "config", "--local", "beads.role", "decoy-role")
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			repo := NewGitRepository(target)
+			got, found, err := repo.GetConfig(t.Context(), key)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, "target-role", got, "%s read through inherited routing", key)
+			require.NoError(t, repo.SetConfig(t.Context(), key, "written-role"))
+			require.Equal(t, "written-role", runGit(t, target, "config", "--local", "--get", "beads.role"))
+			require.Equal(t, "decoy-role", runGit(t, decoy, "config", "--local", "--get", "beads.role"),
+				"%s write escaped to the inherited repository", key)
+		})
+	}
+}
+
 func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)

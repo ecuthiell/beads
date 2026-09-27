@@ -122,6 +122,56 @@ func TestSecretGitTrackingIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
+// A checkout reachable only through inherited Git routing is the case a
+// scrubbed-only probe cannot see at all: it finds no repository, reports
+// "untracked", and the fail-open guard writes the secret into a tracked
+// config.yaml. The inherited fallback is what keeps the refusal working there.
+func TestSecretGitTrackingHonorsLegitimateGitRouting(t *testing.T) {
+	gitDir, work := t.TempDir(), t.TempDir()
+	routedGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(gitenv.ScrubRouting(os.Environ()), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("routed git %v: %v\n%s", args, err, output)
+		}
+	}
+	routedGit("init", "--quiet")
+	tracked := filepath.Join(work, "config.yaml")
+	untracked := filepath.Join(work, "untracked.yaml")
+	for _, path := range []string{tracked, untracked} {
+		if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routedGit("add", "--", tracked)
+
+	// The work tree holds no .git entry, so the scrubbed probe must fail here.
+	// Without this precondition the inherited fallback could pass vacuously.
+	scrubbed := exec.Command("git", "ls-files", "--error-unmatch", tracked)
+	scrubbed.Dir = work
+	scrubbed.Env = gitenv.ScrubRouting(os.Environ())
+	if scrubbed.Run() == nil {
+		t.Fatal("scrubbed probe already resolves the routed checkout; fixture proves nothing")
+	}
+
+	t.Setenv("GIT_DIR", gitDir)
+	t.Setenv("GIT_WORK_TREE", work)
+	if !isGitTracked(tracked) {
+		t.Error("legitimate routing hid the tracked file from the secret guard")
+	}
+	if isGitTracked(untracked) {
+		t.Error("untracked file reported as tracked")
+	}
+	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
+		t.Errorf("tracked secret refusal = %v", err)
+	}
+	if err := checkSecretGitTracked(untracked, "linear.api_key"); err != nil {
+		t.Errorf("untracked secret refused: %v", err)
+	}
+}
+
 // Fixture setup uses the same routing boundary before any per-case poison is set.
 func runConfigProbeGit(t *testing.T, dir string, args ...string) {
 	t.Helper()

@@ -841,7 +841,15 @@ func guardHookWritePathWithProbe(hookPath string, allowTracked bool, tracked fun
 	// incident). A bd-owned hook the user chose to commit (e.g. a team-shared
 	// .beads/hooks/) is bd's to maintain — same policy as shared installs.
 	if proof := tracked(hookPath); proof != "" && !isBdOwnedHookFile(hookPath) {
-		return fmt.Errorf("%s is tracked by git (%s) and not a bd-managed hook; bd will not modify committed files it does not own\nUntrack it (git rm --cached) or move hooks to an untracked directory and re-run", hookPath, proof)
+		// `git rm --cached` only aims at the index that supplied the proof if the
+		// operator's shell still carries the same routing bd saw, so the inherited
+		// case names clearing that routing as the remedy instead. Both remediations
+		// are fixed strings; neither exposes an inherited value.
+		remediation := "Untrack it (git rm --cached) or move hooks to an untracked directory and re-run"
+		if proof == trackedProofInheritedIndex {
+			remediation = "Clear the inherited Git routing environment and re-run, or untrack it (git rm --cached) in the index that routing selects"
+		}
+		return fmt.Errorf("%s is tracked by git (%s) and not a bd-managed hook; bd will not modify committed files it does not own\n%s", hookPath, proof, remediation)
 	}
 	return nil
 }
@@ -860,9 +868,21 @@ func isBdOwnedHookFile(path string) bool {
 	return err == nil && versionInfo.IsBdHook
 }
 
+// Fixed labels naming which index supplied a tracked-file proof. They are
+// constants so the refusal can branch on the evidence source without
+// reproducing the wording.
+const (
+	trackedProofContainingIndex = "containing repository index"
+	trackedProofInheritedIndex  = "inherited Git index"
+)
+
 // isGitTrackedFile reports whether either the containing repository or the
 // inherited Git context tracks path. If neither probe succeeds, errors count
 // as untracked — the guard only blocks writes it can prove are unsafe.
+//
+// This and isGitTrackedFileWithEnv are test-only conveniences. Production
+// callers should use the Context variants, whose label feeds the refusal
+// diagnostic; the boolean form discards it.
 func isGitTrackedFile(path string) bool {
 	return gitTrackedFileContext(path) != ""
 }
@@ -892,9 +912,9 @@ func gitTrackedFileContextWithEnv(path string, clean, inherited []string) string
 		cmd.Env = env
 		if cmd.Run() == nil {
 			if index == 0 {
-				return "containing repository index"
+				return trackedProofContainingIndex
 			}
-			return "inherited Git index"
+			return trackedProofInheritedIndex
 		}
 	}
 	return ""
