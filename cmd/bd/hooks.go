@@ -864,13 +864,21 @@ func isGitTrackedFile(path string) bool {
 	inherited := os.Environ()
 	// Check the containing repository first so inherited routing cannot hide a
 	// tracked hook. The fallback preserves bare work trees and trusted config.
+	// Exit 1 is git's "repository reached, path is not tracked" answer and is
+	// final, so the second probe runs only when the scrubbed environment failed
+	// for a configuration reason (no reachable repository) rather than spawning
+	// a second `git ls-files` on every ordinary miss.
 	for _, env := range [][]string{gitenv.ScrubRouting(inherited), inherited} {
 		// #nosec G204 G702 - fixed "git" command; dir/base come from the hooks
 		// directory bd itself resolved, not user input
 		cmd := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", base)
 		cmd.Env = env
-		if cmd.Run() == nil {
+		err := cmd.Run()
+		if err == nil {
 			return true
+		}
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+			return false
 		}
 	}
 	return false
@@ -1411,8 +1419,11 @@ func resetHooksPathIfBeadsManaged() error {
 		return nil // not in a git repo
 	}
 
-	// These checks are defensive: repoRoot and commonDir share the cached Git context.
-	// The common-dir pin states intent: --local addresses the common config through either gitdir.
+	// These checks are defensive. repoRoot and commonDir are resolved
+	// independently, and an inherited GIT_DIR can make them name different
+	// repositories, so their agreement is intent rather than an invariant.
+	// The common-dir pin states that intent: --git-dir addresses the common
+	// config through either gitdir, while repoRoot is only the subprocess cwd.
 	commonDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return fmt.Errorf("resolve Git common directory for role reset: %w", err)

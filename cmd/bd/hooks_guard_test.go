@@ -412,8 +412,16 @@ func TestGuardHookWritePathHonorsInheritedRepository(t *testing.T) {
 			args := []string{"-C", hooksDir, "ls-files", "--error-unmatch", "--", "pre-commit"}
 			clean := exec.Command("git", args...)
 			clean.Env = gitenv.ScrubRouting(inherited)
-			if out, err := clean.CombinedOutput(); err == nil {
+			out, cleanErr := clean.CombinedOutput()
+			if cleanErr == nil {
 				t.Fatalf("fixture must require inherited context, scrubbed probe succeeded: %s", out)
+			}
+			// The inherited fallback runs only when the scrubbed probe fails
+			// for a configuration reason. Exit 1 means "repository reached,
+			// path is not tracked" and is final, so a fixture that produced it
+			// would make the fallback unreachable and this test vacuous.
+			if exit, ok := cleanErr.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+				t.Fatalf("fixture must fail the scrubbed probe for a configuration reason, got exit 1: %s", out)
 			}
 			fallback := exec.Command("git", args...)
 			fallback.Env = inherited
