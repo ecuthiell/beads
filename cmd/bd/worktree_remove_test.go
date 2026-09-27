@@ -195,6 +195,43 @@ func TestScrubWorktreeGitEnvUsesHostKeySemantics(t *testing.T) {
 	}
 }
 
+// The removal scrub's stricter no-optional-locks policy must key off the same
+// identity rule the subprocess uses (execenv), not strings.ToUpper: on Windows
+// the two disagree in both directions for non-ASCII keys, so ToUpper both lets
+// a honored key survive and drops one os/exec keeps distinct.
+func TestScrubWorktreeRemovalGitEnvUsesSubprocessKeyIdentity(t *testing.T) {
+	input := []string{
+		"PATH=/trusted/bin",
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_OPTIONAL_LOCKS=1",
+		// U+0130: ToUpper leaves it unmatched, Win32 folds it to git_optional_locks.
+		"GİT_OPTIONAL_LOCKS=1",
+		// U+017F: ToUpper folds it onto the literal, Win32 keeps it distinct.
+		"GIT_OPTIONAL_LOCKſ=1",
+	}
+	for _, test := range []struct {
+		name, goos string
+		want       []string
+	}{
+		{
+			name: "POSIX keys are byte-exact",
+			goos: "linux",
+			want: []string{"PATH=/trusted/bin", "GİT_OPTIONAL_LOCKS=1", "GIT_OPTIONAL_LOCKſ=1"},
+		},
+		{
+			name: "Windows keys follow subprocess identity",
+			goos: "windows",
+			want: []string{"PATH=/trusted/bin", "GIT_OPTIONAL_LOCKſ=1"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := scrubWorktreeRemovalGitEnvForOS(input, test.goos); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("scrubWorktreeRemovalGitEnvForOS() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestNewWorktreeRemovalGitPinsExecutable(t *testing.T) {
 	t.Setenv("GIT_NO_REPLACE_OBJECTS", "0")
 	t.Setenv("GIT_OPTIONAL_LOCKS", "1")

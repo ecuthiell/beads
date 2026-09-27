@@ -116,6 +116,41 @@ Examples:
 
 var forceGitTracked bool
 
+// newRoleConfigWriter captures fresh cwd and scrubbed routing once per write
+// operation. The process-wide Git cache and Beads storage do not select it.
+func newRoleConfigWriter() (func(...string) error, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	env := gitenv.ScrubRouting(os.Environ())
+	probe := exec.Command("git", "rev-parse", "--git-common-dir")
+	probe.Dir, probe.Env = dir, env
+	out, err := probe.Output()
+	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return nil, fmt.Errorf("resolving common Git config: %w", err)
+	}
+	commonDir := git.NormalizePath(strings.TrimSpace(string(out)))
+	if commonDir == "" {
+		return nil, fmt.Errorf("Git returned an empty common directory")
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(dir, commonDir)
+	}
+	return func(args ...string) error {
+		// Callers supply only the fixed role key, validated values and unset flag.
+		cmd := exec.Command("git", append([]string{"--git-dir", commonDir, "config", "--local"}, args...)...) //nolint:gosec // private validated config operations
+		cmd.Dir, cmd.Env = dir, env
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}, nil
+}
+
 var configSetCmd = &cobra.Command{
 	Use:           "set <key> <value>",
 	Short:         "Set a configuration value",
@@ -205,9 +240,11 @@ var configSetCmd = &cobra.Command{
 			// not role resolution as a whole: routing.DetectUserRole,
 			// beads.RepoContext.Role, `bd config show` and `bd doctor` still
 			// resolve beads.role through the inherited environment.
-			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRouting(os.Environ())
-			if err := cmd.Run(); err != nil {
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("setting beads.role in git config: %v", err)
+			}
+			if err := write("beads.role", value); err != nil {
 				return HandleError("setting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -605,9 +642,11 @@ var configUnsetCmd = &cobra.Command{
 		}
 
 		if key == "beads.role" {
-			gitCmd := exec.Command("git", "config", "--unset", "beads.role")
-			gitCmd.Env = gitenv.ScrubRouting(os.Environ())
-			if err := gitCmd.Run(); err != nil {
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("unsetting beads.role in git config: %v", err)
+			}
+			if err := write("--unset", "beads.role"); err != nil {
 				return HandleError("unsetting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -897,11 +936,15 @@ Examples:
 			}
 		}
 
-		for _, p := range gitPairs {
-			cmd := exec.Command("git", "config", "beads.role", p.value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRouting(os.Environ())
-			if err := cmd.Run(); err != nil {
-				return HandleError("setting %s in git config: %v", p.key, err)
+		if len(gitPairs) > 0 {
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("setting beads.role in git config: %v", err)
+			}
+			for _, p := range gitPairs {
+				if err := write("beads.role", p.value); err != nil {
+					return HandleError("setting %s in git config: %v", p.key, err)
+				}
 			}
 		}
 
