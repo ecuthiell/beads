@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,70 @@ func (s *testSuite) TestConfig_RoundTrip() {
 	s.Require().NoError(err)
 	s.True(found)
 	s.Equal("maintainer", value)
+}
+
+func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
+	s.gitInit()
+	configPath := filepath.Join(s.tmpDir, ".git", "config")
+	original, err := os.ReadFile(configPath)
+	s.Require().NoError(err)
+	for _, tc := range []struct {
+		name, key     string
+		exitCode      int
+		roleReadFails bool
+	}{
+		{"malformed_config", "beads.role", 128, true},
+		{"invalid_key", "invalid", 1, false},
+		// A beads.role read scrubs inherited config suppression, so a bad
+		// GIT_CONFIG_NOSYSTEM value never reaches that one key. Read a key that
+		// still inherits it, so the env-borne failure stays covered, and pin the
+		// role read's immunity below rather than dropping the case.
+		{"invalid_routing_boolean", "core.bare", 128, false},
+	} {
+		s.Run(tc.name, func() {
+			switch tc.name {
+			case "malformed_config":
+				s.Require().NoError(os.WriteFile(configPath, []byte("[broken\n"), 0600))
+				t := s.T()
+				t.Cleanup(func() {
+					if err := os.WriteFile(configPath, original, 0600); err != nil {
+						t.Errorf("restore repository config: %v", err)
+					}
+				})
+			case "invalid_routing_boolean":
+				s.T().Setenv("GIT_CONFIG_NOSYSTEM", "not-a-boolean")
+			}
+			value, found, err := s.repo.GetConfig(s.Ctx(), tc.key)
+			s.Require().Error(err)
+			s.False(found)
+			s.Empty(value)
+			var exitErr *exec.ExitError
+			s.Require().ErrorAs(err, &exitErr)
+			s.Equal(tc.exitCode, exitErr.ExitCode())
+			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
+			s.Require().NotEmpty(diagnostic)
+			s.Contains(err.Error(), diagnostic)
+			if tc.roleReadFails {
+				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().Error(roleErr)
+				s.ErrorAs(roleErr, &exitErr)
+			} else if tc.name == "invalid_routing_boolean" {
+				_, found, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(roleErr)
+				s.False(found)
+			}
+		})
+	}
+}
+
+// Regression guard: pre-canceled contexts already propagated before the config fix.
+func (s *testSuite) TestConfig_CancellationIsNotMissing() {
+	ctx, cancel := context.WithCancel(s.Ctx())
+	cancel()
+	value, found, err := s.repo.GetConfig(ctx, "beads.role")
+	s.ErrorIs(err, context.Canceled)
+	s.False(found)
+	s.Empty(value)
 }
 
 func (s *testSuite) TestConfig_SetEmptyKeyErrors() {
@@ -399,8 +464,13 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
-				require.False(t, found, "generic role reads still use the current caller environment")
+				// changedHome is the only HOME here holding a .gitconfig, so Git's
+				// refusal to parse that file is what proves the generic reader used
+				// the current caller environment rather than a captured one. The
+				// reader surfaces such read failures instead of reporting absence.
+				require.Error(t, err, "generic role reads still use the current caller environment")
+				require.ErrorContains(t, err, ".gitconfig")
+				require.False(t, found)
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
 				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))
