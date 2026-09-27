@@ -12,18 +12,19 @@ separate from Git branch commits.
 All worktrees in the same repository use the same beads workspace unless you
 override discovery with `BEADS_DIR`.
 
-The startup probe that locates a shared worktree's `.beads` config scrubs
-inherited Git routing variables such as `GIT_DIR` and `GIT_WORK_TREE` from its
-subprocess environment, so a routed environment cannot point that one lookup at
-another repository. It is a single probe, not a general guarantee: the
-process-wide Git context backing repository-root and hooks-directory lookups
-still honors inherited routing. Scrubbing also drops any inherited
-`GIT_CEILING_DIRECTORIES`, which *widens* upward discovery rather than narrowing
-it: the explicit working directory fixes where that probe's search starts, not
-where it stops, so the probe can select a containing parent repository above
-that directory.
-Clearing those variables from the `bd` process environment applies only to
-`bd worktree` commands.
+Startup *config* discovery — the `rev-parse` probe in `internal/config`'s
+`gitDirsForRepo`, which locates a linked worktree's shared `.beads` config —
+scrubs inherited Git routing variables such as `GIT_DIR` and `GIT_WORK_TREE`
+from its subprocess environment, so a routed environment cannot point that one
+lookup at another repository. It is a single probe, not a general guarantee:
+other startup Git probes still honor inherited routing, including `internal/git`'s
+process-cached repository context backing repository-root and hooks-directory
+lookups. Scrubbing also drops any inherited `GIT_CEILING_DIRECTORIES`, which
+*widens* upward discovery rather than narrowing it: the explicit working
+directory fixes where that probe's search starts, not where it stops, so the
+probe can select a containing parent repository above that directory. Clearing
+those variables from the `bd` process environment applies only to `bd worktree`
+commands.
 
 ```
 project/
