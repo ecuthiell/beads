@@ -1120,19 +1120,17 @@ func ResolveBeadsDirForRepo(repoPath string) string {
 }
 
 func worktreeFallbackBeadsDirForRepo(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-dir", "--git-common-dir")
-	output, err := cmd.Output()
+	// Shared with internal/config's gitDirsForRepo: an unscrubbed copy would
+	// answer for whatever GIT_DIR/GIT_COMMON_DIR name instead of repoPath, so
+	// the config could resolve from one repository and this database from
+	// another.
+	rawGitDir, rawCommonDir, err := git.RevParseGitDirs(repoPath)
 	if err != nil {
 		return ""
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 2 {
-		return ""
-	}
-
-	gitDir := gitPathForRepo(repoPath, strings.TrimSpace(lines[0]))
-	commonDir := gitPathForRepo(repoPath, strings.TrimSpace(lines[1]))
+	gitDir := gitPathForRepo(repoPath, rawGitDir)
+	commonDir := gitPathForRepo(repoPath, rawCommonDir)
 	if gitDir == "" || commonDir == "" || utils.PathsEqual(gitDir, commonDir) {
 		return ""
 	}

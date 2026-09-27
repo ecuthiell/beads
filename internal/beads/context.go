@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 )
 
 // UserRole represents the user's relationship to a repository.
@@ -171,12 +172,13 @@ func isExternalBeadsDir(beadsDir string) (bool, error) {
 // getGitCommonDirForPath returns the shared git directory for a path.
 // For worktrees, this returns the shared git directory (common to all worktrees).
 func getGitCommonDirForPath(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir")
-	output, err := cmd.Output()
+	// Shared with internal/config's gitDirsForRepo and the .beads worktree
+	// fallback: all three ask the same question, so all three must scrub the
+	// inherited redirects that outrank -C.
+	_, result, err := git.RevParseGitDirs(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to get git common dir for %s: %w", path, err)
 	}
-	result := strings.TrimSpace(string(output))
 
 	if !filepath.IsAbs(result) {
 		absPath, err := filepath.Abs(path)
@@ -233,6 +235,18 @@ func getRepoRootFromPath(path string) (string, error) {
 // variables that point to the worktree's .git instead of the main repo.
 // We explicitly set GIT_DIR and GIT_WORK_TREE to ensure git operates on
 // the correct repository (the one containing .beads/).
+//
+// Pinning GIT_DIR and GIT_WORK_TREE closes the repository-redirect half of
+// that inheritance only. GIT_CONFIG_COUNT/GIT_CONFIG_KEY_<n>/
+// GIT_CONFIG_VALUE_<n> and GIT_CONFIG_PARAMETERS are command-scope
+// configuration, which outranks the pinned repository's own local config, so
+// an inherited copy of one still decides what this command reads. That matters
+// most for Role below: it reads beads.role through this helper, and the
+// routing authority (internal/routing.roleFromGitConfig) already scrubs, so
+// without the scrub here the surface that REPORTS the role could disagree with
+// the surface that routes on it. Scrubbing redirects preserves the discovery
+// and config fences, so a caller that fenced bd off from the host's global
+// config keeps that boundary.
 func (rc *RepoContext) GitCmd(ctx context.Context, args ...string) *exec.Cmd {
 	gitArgs := append([]string{"-c", "core.hooksPath="}, args...)
 	cmd := exec.CommandContext(ctx, "git", gitArgs...)
@@ -244,7 +258,7 @@ func (rc *RepoContext) GitCmd(ctx context.Context, args ...string) *exec.Cmd {
 
 	// Security: Disable git hooks and templates to prevent code execution
 	// in potentially malicious repositories (SEC-001, SEC-002)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(gitenv.ScrubRouting(os.Environ()),
 		"GIT_TEMPLATE_DIR=",          // Disable templates
 		"GIT_DIR="+gitDir,            // Ensure git uses the correct .git directory
 		"GIT_WORK_TREE="+rc.RepoRoot, // Ensure git uses the correct work tree

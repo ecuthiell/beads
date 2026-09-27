@@ -597,14 +597,7 @@ func initExcludeGit(t *testing.T, dir string, args ...string) string {
 
 func newInitExcludeRepos(t *testing.T) (worktree, decoy, commonExclude, privateExclude string) {
 	t.Helper()
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			// Setenv registers restoration; Unsetenv then makes the key absent during the test.
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)

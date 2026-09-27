@@ -20,7 +20,12 @@ func NewGitRepository(workDir string) domain.GitRepository {
 }
 
 // NewInitGitRepository binds init artifact operations to the selected workDir.
-// The generic constructor retains inherited routing for its existing callers.
+// The generic constructor retains inherited routing for its existing callers,
+// uniformly and with no per-key exceptions: a reader that scrubbed for one key
+// would silently drop GIT_CONFIG_NOSYSTEM from that key's command, which is
+// how the caller reports an invalid routing boolean. Callers that need the
+// selected-directory boundary ask for it by constructing through this
+// function.
 func NewInitGitRepository(workDir string) domain.GitRepository {
 	return &gitRepositoryImpl{workDir: workDir, env: gitenv.ScrubRouting(os.Environ())}
 }
@@ -107,9 +112,6 @@ func (r *gitRepositoryImpl) GetConfig(ctx context.Context, key string) (string, 
 		return "", false, fmt.Errorf("git: GetConfig: key must not be empty")
 	}
 	cmd := r.gitCmd(ctx, "config", "--get", key)
-	if key == "beads.role" && r.env == nil {
-		cmd.Env = gitenv.ScrubRouting(os.Environ())
-	}
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -134,9 +136,6 @@ func (r *gitRepositoryImpl) SetConfig(ctx context.Context, key, value string) er
 		return fmt.Errorf("git: SetConfig: key must not be empty")
 	}
 	cmd := r.gitCmd(ctx, "config", key, value)
-	if key == "beads.role" && r.env == nil {
-		cmd.Env = gitenv.ScrubRouting(os.Environ())
-	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git: SetConfig %s: %w: %s", key, err, bytes.TrimSpace(out))

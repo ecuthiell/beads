@@ -294,14 +294,36 @@ func (s *testSuite) TestExec_HappensInWorkDir() {
 	s.True(info.IsDir())
 }
 
-func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
+// isolateInheritedGitEnv makes a fixture hermetic against the host's Git
+// environment: it removes every inherited redirect AND fence key, then
+// re-asserts the one boundary the fixture still needs for itself.
+//
+// Clearing the fences is the point of this helper. GIT_CONFIG_GLOBAL and
+// GIT_CONFIG_SYSTEM outrank HOME, so on a host that exports one, a fixture
+// that pins HOME and writes its own ~/.gitconfig silently reads the host's
+// file instead. ScrubRouting preserves fences by design -- removing a fence
+// widens Git's authority rather than narrowing it -- so a hermetic baseline
+// has to drop them here and then assert its own boundary, exactly as
+// (*testSuite).SetupTest does. GIT_CONFIG_NOSYSTEM=1 is that assertion:
+// without it, dropping an inherited GIT_CONFIG_NOSYSTEM would trade a
+// dependency on the host's global config for one on /etc/gitconfig. A fixture
+// that needs some other fence sets it for itself after calling this.
+func isolateInheritedGitEnv(t *testing.T) {
+	t.Helper()
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
+		if !gitenv.IsRedirectKeyForOS(key, runtime.GOOS) && !gitenv.IsFenceKeyForOS(key, runtime.GOOS) {
+			continue
 		}
+		// Setenv registers restoration; Unsetenv then makes the key absent.
+		t.Setenv(key, "")
+		require.NoError(t, os.Unsetenv(key))
 	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)
@@ -357,8 +379,18 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 			env := os.Environ()
 			before, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
 			require.NoError(t, err)
+			// Role operations go through the SELECTED constructor, which is
+			// the one production uses: runInitProxiedServerTail builds its use
+			// case with NewInitGitRepository before calling BeadsRole /
+			// SetBeadsRole. The generic constructor below deliberately keeps
+			// inherited routing for every key, so the role plane gets its
+			// boundary by choosing a constructor rather than by a per-key
+			// exception inside the generic reader -- an exception there would
+			// also strip GIT_CONFIG_NOSYSTEM from the role command and hide
+			// invalid routing booleans.
+			roleRepo := NewInitGitRepository(target)
 			repo := NewGitRepository(target)
-			useCase := domain.NewGitUseCase(target, repo)
+			useCase := domain.NewGitUseCase(target, roleRepo)
 			got, found, err := useCase.BeadsRole(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
@@ -384,13 +416,7 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 }
 
 func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)
@@ -455,8 +481,16 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
-				require.False(t, found, "generic role reads still use the current caller environment")
+				// The generic reader follows the caller's CURRENT environment,
+				// so it reaches the malformed ~/.gitconfig written just above
+				// and Git exits 128 with a diagnostic. GetConfig maps only
+				// "exit 1 with empty stderr" to absence, so this surfaces as an
+				// error -- and the error is what proves the read was not
+				// captured at construction time.
+				var roleErr *exec.ExitError
+				require.ErrorAs(t, err, &roleErr, "generic role reads still use the current caller environment")
+				require.Equal(t, 128, roleErr.ExitCode())
+				require.False(t, found)
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))
 				require.NoError(t, selected.SetConfig(t.Context(), "beads.role", "contributor"))

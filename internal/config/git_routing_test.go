@@ -32,8 +32,8 @@ func TestGetIdentityIgnoresInheritedGitRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	Set("identity", "")
-	poisonConfig := filepath.Join(t.TempDir(), "poison.gitconfig")
-	if err := os.WriteFile(poisonConfig, []byte("[user]\n\tname = injected-user\n"), 0o600); err != nil {
+	fenceConfig := filepath.Join(t.TempDir(), "fenced.gitconfig")
+	if err := os.WriteFile(fenceConfig, []byte("[user]\n\tname = fenced-user\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -44,7 +44,13 @@ func TestGetIdentityIgnoresInheritedGitRouting(t *testing.T) {
 	}{
 		{name: "repository", env: map[string]string{"GIT_DIR": filepath.Join(decoy, ".git")}, want: "target-user"},
 		{name: "inline config", env: map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "injected-user"}, want: "target-user"},
-		{name: "global config", env: map[string]string{"GIT_CONFIG_GLOBAL": poisonConfig}, clearLocal: true, want: "home-user"},
+		// GIT_CONFIG_GLOBAL is a FENCE, not a redirect: it is how a caller
+		// isolates a command from the host's ~/.gitconfig. Scrubbing it would
+		// fall back to "home-user" here, which is the host identity the caller
+		// deliberately replaced -- so the fenced file must win. This case is
+		// the regression pin for that direction; before the redirect/fence
+		// split it asserted "home-user" and so pinned the defect.
+		{name: "global config fence is honored", env: map[string]string{"GIT_CONFIG_GLOBAL": fenceConfig}, clearLocal: true, want: "fenced-user"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.clearLocal {
@@ -122,12 +128,72 @@ func TestSecretGitTrackingIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
+// TestSecretGitTrackingSeesBareRepoWithExternalWorkTree pins the fail-CLOSED
+// polarity of the credential guard. `isGitTracked` backs
+// CheckSecretKeyGitSafety, whose own doc says it is a security control, so
+// "could not tell" must never read as "safe to write the secret".
+//
+// A bare repository with an external work tree is visible ONLY through the
+// inherited GIT_DIR/GIT_WORK_TREE pair -- there is no .git in the work tree
+// for the scrubbed probe to find. With a scrub-only probe `git ls-files
+// --error-unmatch` exits 128 there, isGitTracked returns false, and `bd config
+// set linear.api_key <secret>` happily writes the credential into a
+// git-tracked config.yaml. The inherited fallback is what closes that.
+func TestSecretGitTrackingSeesBareRepoWithExternalWorkTree(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "bare.git")
+	work := filepath.Join(root, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runConfigProbeGit(t, root, "init", "--bare", "--quiet", bare)
+
+	tracked := filepath.Join(work, "config.yaml")
+	untracked := filepath.Join(work, "untracked.yaml")
+	for _, path := range []string{tracked, untracked} {
+		if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The work tree is not a repository on its own; only this env pair binds
+	// the two together, which is exactly the view the scrub removes.
+	t.Setenv("GIT_DIR", bare)
+	t.Setenv("GIT_WORK_TREE", work)
+	runConfigProbeGitInheritingRouting(t, work, "add", "--", tracked)
+
+	if !isGitTracked(tracked) {
+		t.Error("tracked file in a bare repo with an external work tree reported as untracked: the credential guard is fail-open")
+	}
+	if isGitTracked(untracked) {
+		t.Error("untracked file reported as tracked")
+	}
+	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
+		t.Errorf("tracked secret refusal = %v, want a refusal", err)
+	}
+	if err := checkSecretGitTracked(untracked, "linear.api_key"); err != nil {
+		t.Errorf("untracked secret refused: %v", err)
+	}
+}
+
 // Fixture setup uses the same routing boundary before any per-case poison is set.
 func runConfigProbeGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, output)
+	}
+}
+
+// runConfigProbeGitInheritingRouting is the deliberate counterpart: the
+// bare-repo fixture is only reachable through the inherited GIT_DIR /
+// GIT_WORK_TREE pair, so scrubbing here would fail to build it at all.
+func runConfigProbeGitInheritingRouting(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, output)
 	}

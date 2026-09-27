@@ -9,13 +9,22 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 )
 
+// gitCommandRunner runs git for role and remote detection. This package is the
+// routing AUTHORITY -- roleFromGitConfig is what decides whether bd writes as a
+// maintainer or a contributor -- so it scrubs inherited Git redirects for the
+// same reason `bd config get beads.role` does. Without the scrub a redirected
+// GIT_DIR outranks cmd.Dir, and the surface that reports the role would
+// disagree with the surface that enforces it. Discovery and config fences are
+// preserved, so an explicitly fenced caller keeps its boundary.
 var gitCommandRunner = func(repoPath string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	if repoPath != "" {
 		cmd.Dir = repoPath
 	}
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	return cmd.Output()
 }
 

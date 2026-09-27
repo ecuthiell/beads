@@ -199,7 +199,13 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// Role surfaces scrub inherited Git REDIRECTS (GIT_DIR,
+			// GIT_WORK_TREE, GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS, ...)
+			// so the working directory selects the repository. Discovery and
+			// config FENCES -- GIT_CEILING_DIRECTORIES and
+			// GIT_CONFIG_GLOBAL/_SYSTEM/_NOSYSTEM -- are deliberately
+			// preserved, because removing them hands Git back the authority a
+			// fenced caller took away. See internal/gitenv.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {

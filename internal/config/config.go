@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"gopkg.in/yaml.v3"
 )
@@ -417,23 +418,15 @@ func worktreeFallbackConfigPath(repoPath string) string {
 }
 
 func gitDirsForRepo(repoPath string) (gitDir, commonDir string, ok bool) {
-	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-dir", "--git-common-dir")
-	// repoPath is the authority for this probe. Inherited Git routing such as
-	// GIT_DIR overrides -C and can make startup read another repository's
-	// shared-worktree config before command dispatch has begun.
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
-	output, err := cmd.Output()
+	// Shared with internal/beads so the config, the .beads database, and the
+	// worktree comparison cannot resolve from three different repositories.
+	rawGitDir, rawCommonDir, err := git.RevParseGitDirs(repoPath)
 	if err != nil {
 		return "", "", false
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 2 {
-		return "", "", false
-	}
-
-	gitDir = gitPathForRepo(repoPath, strings.TrimSpace(lines[0]))
-	commonDir = gitPathForRepo(repoPath, strings.TrimSpace(lines[1]))
+	gitDir = gitPathForRepo(repoPath, rawGitDir)
+	commonDir = gitPathForRepo(repoPath, rawCommonDir)
 	if gitDir == "" || commonDir == "" {
 		return "", "", false
 	}
@@ -1015,9 +1008,12 @@ func ResolveExternalProjectPath(projectName string) string {
 //  3. git config user.name
 //  4. hostname
 //
-// The Git lookup discards inherited routing overrides, including
-// GIT_CONFIG_GLOBAL. Set user.name in the default global config location
-// rather than selecting a different file through that environment override.
+// The Git lookup discards inherited routing REDIRECTS, so a decoy GIT_DIR
+// cannot substitute another repository's user.name. It honors config fences:
+// a caller that pointed GIT_CONFIG_GLOBAL at a specific file gets the
+// user.name from that file, because dropping the fence would silently fall
+// back to the host's real global config and put the wrong sender on outgoing
+// mail.
 func GetIdentity(flagValue string) string {
 	// 1. Command-line flag takes precedence
 	if flagValue != "" {

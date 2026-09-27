@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
@@ -1128,6 +1129,65 @@ func TestRequireRole_NotConfigured(t *testing.T) {
 	}
 	if err != ErrRoleNotConfigured {
 		t.Errorf("RequireRole() returned %v, want ErrRoleNotConfigured", err)
+	}
+}
+
+// TestRoleIgnoresInjectedGitConfig pins the boundary GitCmd draws for Role.
+//
+// GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n> is command-scope configuration and
+// outranks the repository's local beads.role, so the GH#2538 GIT_DIR and
+// GIT_WORK_TREE pins alone do not stop it. The routing authority scrubs, so
+// without the scrub in GitCmd this reader would report a role bd does not
+// route with.
+func TestRoleIgnoresInjectedGitConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := initGitRepo(tmpDir); err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatalf("failed to create beads.db: %v", err)
+	}
+	cmd := exec.Command("git", "config", "--local", "beads.role", string(Contributor))
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to set git config: %v", err)
+	}
+
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "beads.role")
+	t.Setenv("GIT_CONFIG_VALUE_0", string(Maintainer))
+
+	// Precondition: the injection really does outrank the local value, so a
+	// green assertion below cannot be green because the channel is inert.
+	unscrubbed := exec.Command("git", "config", "--get", "beads.role")
+	unscrubbed.Dir = tmpDir
+	injected, err := unscrubbed.Output()
+	if err != nil {
+		t.Fatalf("unscrubbed probe failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(injected)); got != string(Maintainer) {
+		t.Fatalf("injection precondition: unscrubbed git answered %q, want %q", got, Maintainer)
+	}
+
+	t.Cleanup(func() {
+		ResetCaches()
+		git.ResetCaches()
+	})
+
+	rc, err := GetRepoContextForWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("GetRepoContextForWorkspace failed: %v", err)
+	}
+	role, ok := rc.Role()
+	if !ok {
+		t.Fatal("Role() returned ok=false, want the repository's local value")
+	}
+	if role != Contributor {
+		t.Errorf("Role() = %q, want %q (injected config must not outrank the repository)", role, Contributor)
 	}
 }
 

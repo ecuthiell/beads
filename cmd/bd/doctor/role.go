@@ -3,9 +3,11 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
@@ -21,6 +23,9 @@ func CheckBeadsRole(path string) DoctorCheck {
 	if path != "" {
 		cmd.Dir = path
 	}
+	// Scrubbed like the other role surfaces: an inherited GIT_DIR outranks
+	// cmd.Dir, so an unscrubbed doctor would diagnose the redirected repo.
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 
 	if err == nil {
@@ -45,6 +50,9 @@ func CheckBeadsRoleWithStore(path string, ss *SharedStore) DoctorCheck {
 	if path != "" {
 		cmd.Dir = path
 	}
+	// Scrubbed like the other role surfaces: an inherited GIT_DIR outranks
+	// cmd.Dir, so an unscrubbed doctor would diagnose the redirected repo.
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 
 	if err == nil {

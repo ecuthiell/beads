@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/doltserver"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/backends"
@@ -2988,6 +2989,7 @@ func shouldPromptForRole() bool {
 // Returns the role and true if configured, or empty string and false if not set.
 func getBeadsRole() (string, bool) {
 	cmd := exec.Command("git", "config", "--get", "beads.role")
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return "", false
@@ -3000,8 +3002,13 @@ func getBeadsRole() (string, bool) {
 }
 
 // setBeadsRole writes the beads.role git config value.
+//
+// Scrubbed like every other role surface: a role WRITE that followed an
+// inherited GIT_DIR would land in the redirected repository while the reader
+// answers from this one.
 func setBeadsRole(role string) error {
 	cmd := exec.Command("git", "config", "beads.role", role)
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	return cmd.Run()
 }
 

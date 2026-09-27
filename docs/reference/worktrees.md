@@ -12,10 +12,38 @@ separate from Git branch commits.
 All worktrees in the same repository use the same beads workspace unless you
 override discovery with `BEADS_DIR`.
 
-Startup Git discovery probes for every `bd` command scrub inherited Git routing
-variables such as `GIT_DIR` and `GIT_WORK_TREE` from their subprocess environment.
-Clearing those variables from the `bd` process environment applies only to
-`bd worktree` commands.
+The startup probes that decide which repository owns the workspace — the
+`config.yaml` lookup, the `.beads` directory fallback, and the linked-worktree
+comparison — scrub inherited Git *redirect* variables such as `GIT_DIR` and
+`GIT_WORK_TREE` from their subprocess environment, so the directory `bd` was
+run in selects the repository. So do the `beads.role` surfaces, each named
+here rather than covered by a general claim: `bd config get/set/unset
+beads.role`, `bd config show`, `bd doctor`, `bd hooks uninstall`, `bd
+context` (and the same context snapshot `bd serve` publishes), the `bd init`
+writers, and the role detection in `internal/routing` that decides whether
+`bd` writes as a maintainer or as a contributor.
+
+This is not yet true of every Git call `bd` makes: the cached
+`GetMainRepoRoot`/`GetGitHooksDir`/`GetGitCommonDir` discovery in
+`internal/git` still honors inherited routing, as do ordinary repository
+operations.
+
+Scrubbing removes redirects only. Discovery and config *fences* —
+`GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+`GIT_CONFIG_NOSYSTEM` — are preserved, because dropping them would let Git
+climb into a containing parent repository or re-read the host's global config,
+widening exactly the authority the scrub exists to narrow. A caller that fenced
+`bd` off from the host's Git configuration keeps that boundary.
+
+That preservation has a consequence worth stating plainly: because
+`GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` survive the scrub, a caller able to
+set either one can still supply `beads.role` to a repository that has no local
+value. A local value always wins and `bd init` writes one, so the opening is
+limited to repositories where the honest answer is "not configured".
+
+Clearing routing variables from the `bd` process environment (rather than from
+one subprocess) applies only to `bd worktree` commands, and it likewise leaves
+the fences in place.
 
 ```
 project/

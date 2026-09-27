@@ -1469,6 +1469,7 @@ func resetHooksPathIfBeadsManaged() error {
 		if doctor.IsBeadsManagedHooksPath(repoRoot, hooksPath) {
 			unsetCmd := exec.Command("git", "config", "--unset", "core.hooksPath")
 			unsetCmd.Dir = repoRoot
+			unsetCmd.Env = gitenv.ScrubRouting(os.Environ())
 			if output, err := unsetCmd.CombinedOutput(); err != nil {
 				failures = append(failures, fmt.Sprintf("core.hooksPath: %v (output: %s)", err, strings.TrimSpace(string(output))))
 			}
@@ -1482,11 +1483,19 @@ func resetHooksPathIfBeadsManaged() error {
 	// ambiguous unset" — a repo with a duplicated beads.role (bad merge, hand
 	// edit) would then report a clean uninstall while leaving the key set,
 	// which is the exact failure this is supposed to stop.
+	// repoRoot is the authority for both of these: an inherited GIT_DIR
+	// outranks cmd.Dir, so an unscrubbed uninstall reports success after
+	// clearing beads.role and core.hooksPath in the redirected repository
+	// while leaving this one marked beads-managed. `bd config unset
+	// beads.role` already scrubs, and uninstall must not disagree with it.
+	scrubbed := gitenv.ScrubRouting(os.Environ())
 	getRoleCmd := exec.Command("git", "config", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
+	getRoleCmd.Env = scrubbed
 	if _, err := getRoleCmd.Output(); err == nil {
 		roleCmd := exec.Command("git", "config", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
+		roleCmd.Env = scrubbed
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}

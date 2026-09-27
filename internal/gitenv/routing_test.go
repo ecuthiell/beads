@@ -127,7 +127,7 @@ func TestClearRoutingPreservesNonRoutingGitControls(t *testing.T) {
 	var inherited []envEntry
 	for _, entry := range os.Environ() {
 		key := EntryKey(entry)
-		if !IsRoutingKeyForOS(key, runtime.GOOS) {
+		if !IsRedirectKeyForOS(key, runtime.GOOS) {
 			continue
 		}
 		value, _ := os.LookupEnv(key)
@@ -136,7 +136,7 @@ func TestClearRoutingPreservesNonRoutingGitControls(t *testing.T) {
 	t.Cleanup(func() {
 		for _, entry := range os.Environ() {
 			key := EntryKey(entry)
-			if IsRoutingKeyForOS(key, runtime.GOOS) {
+			if IsRedirectKeyForOS(key, runtime.GOOS) {
 				if err := os.Unsetenv(key); err != nil {
 					t.Errorf("unset %s during cleanup: %v", key, err)
 				}

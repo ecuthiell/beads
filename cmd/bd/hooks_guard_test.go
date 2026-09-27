@@ -334,11 +334,23 @@ func TestApplyHookMigrationRefusesSymlink(t *testing.T) {
 }
 
 func TestGuardHookWritePathHonorsInheritedRepository(t *testing.T) {
-	// Isolate configuration and restore every inherited routing entry afterwards.
+	// Isolate configuration and restore every inherited routing entry
+	// afterwards. ClearRouting is the boundary under test for the redirect
+	// half, so those keys are only registered for restoration here and left
+	// for it to remove. Fences are cleared outright instead: ClearRouting
+	// preserves them by design, so an inherited GIT_CEILING_DIRECTORIES would
+	// otherwise survive into a fixture that never asked for a ceiling. The
+	// three config fences this test does want are re-pinned below.
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+		switch {
+		case gitenv.IsRedirectKeyForOS(key, runtime.GOOS):
 			t.Setenv(key, os.Getenv(key))
+		case gitenv.IsFenceKeyForOS(key, runtime.GOOS):
+			t.Setenv(key, "")
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if _, err := gitenv.ClearRouting(); err != nil {
@@ -352,7 +364,7 @@ func TestGuardHookWritePathHonorsInheritedRepository(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "0")
-	for _, name := range []string{"bare_worktree", "global_safe_directory"} {
+	for _, name := range []string{"bare_worktree", "inline_safe_directory"} {
 		t.Run(name, func(t *testing.T) {
 			repo, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -385,16 +397,22 @@ func TestGuardHookWritePathHonorsInheritedRepository(t *testing.T) {
 			}
 			runGit("config", "core.hooksPath", ".githooks")
 			runGit("add", "--force", "--", ".githooks/pre-commit")
-			if name == "global_safe_directory" {
-				// Reproduce a lower-priority ambient allowance even on an isolated host.
-				ambient := filepath.Join(home, ".config", "git")
-				if err := os.MkdirAll(ambient, 0755); err != nil {
-					t.Fatal(err)
-				}
-				runGit("config", "--file", filepath.Join(ambient, "config"), "safe.directory", "*")
-				// This default-global reset survives ScrubRouting removing GIT_CONFIG_*.
-				runGit("config", "--file", filepath.Join(home, ".gitconfig"), "safe.directory", "")
-				runGit("config", "--global", "--add", "safe.directory", filepath.ToSlash(repo))
+			if name == "inline_safe_directory" {
+				// The ownership allowance must arrive through a REDIRECT, so
+				// that the scrub removes it and only the inherited probe can
+				// see the repository. Inline config is "command" scope, which
+				// is protected configuration, so safe.directory is honored
+				// there (verified: without it Git reports dubious ownership).
+				//
+				// A config FENCE cannot build this fixture. GIT_CONFIG_GLOBAL
+				// survives ScrubRouting by design, so an allowance written to
+				// the global file is visible to BOTH probes and the layout
+				// stops requiring the inherited context at all. The previous
+				// version of this fixture relied on the scrub dropping
+				// GIT_CONFIG_*, which was the defect, not the contract.
+				t.Setenv("GIT_CONFIG_COUNT", "1")
+				t.Setenv("GIT_CONFIG_KEY_0", "safe.directory")
+				t.Setenv("GIT_CONFIG_VALUE_0", filepath.ToSlash(repo))
 				// Exercise Git's ownership-check control flow, not OS ownership/ACLs.
 				t.Setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
 			}

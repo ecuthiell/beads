@@ -195,6 +195,55 @@ func TestScrubWorktreeGitEnvUsesHostKeySemantics(t *testing.T) {
 	}
 }
 
+// TestScrubWorktreeRemovalGitEnvDropsFences pins the removal runner's stricter
+// policy against the shared scrub it is built on. The shared scrub PRESERVES
+// the discovery and config fences, so without the extra IsFenceKeyForOS drop
+// this runner would inherit a ceiling it never had before the fence split --
+// and an inherited GIT_CEILING_DIRECTORIES below the containing repository
+// fails `bd worktree remove` outright. Nothing else in cmd/bd exercises
+// scrubWorktreeRemovalGitEnvForOS.
+func TestScrubWorktreeRemovalGitEnvDropsFences(t *testing.T) {
+	for _, test := range []struct {
+		name, goos string
+		fences     []string
+	}{
+		{
+			name: "POSIX",
+			goos: "linux",
+			fences: []string{
+				"GIT_CEILING_DIRECTORIES=/fenced",
+				"GIT_CONFIG_GLOBAL=/fenced/gitconfig",
+				"GIT_CONFIG_SYSTEM=/fenced/system",
+				"GIT_CONFIG_NOSYSTEM=1",
+			},
+		},
+		{
+			name: "Windows names are case-insensitive",
+			goos: "windows",
+			fences: []string{
+				"git_ceiling_directories=/fenced",
+				"Git_Config_Global=/fenced/gitconfig",
+				"GIT_CONFIG_SYSTEM=/fenced/system",
+				"git_config_nosystem=1",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := append([]string{"PATH=/trusted/bin", "GIT_DIR=/wrong"}, test.fences...)
+			// The shared scrub keeps every fence: that contrast is the whole
+			// reason the removal runner needs a policy of its own.
+			wantShared := append([]string{"PATH=/trusted/bin"}, test.fences...)
+			if got := scrubWorktreeGitRoutingEnvForOS(input, test.goos); !reflect.DeepEqual(got, wantShared) {
+				t.Fatalf("shared scrub = %#v, want the fences preserved: %#v", got, wantShared)
+			}
+			got := scrubWorktreeRemovalGitEnvForOS(input, test.goos)
+			if !reflect.DeepEqual(got, []string{"PATH=/trusted/bin"}) {
+				t.Fatalf("scrubWorktreeRemovalGitEnvForOS() = %#v, want only the non-Git entry", got)
+			}
+		})
+	}
+}
+
 func TestNewWorktreeRemovalGitPinsExecutable(t *testing.T) {
 	t.Setenv("GIT_NO_REPLACE_OBJECTS", "0")
 	t.Setenv("GIT_OPTIONAL_LOCKS", "1")

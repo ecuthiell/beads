@@ -671,9 +671,12 @@ func scrubWorktreeGitRoutingEnv(env []string) []string {
 }
 
 // scrubWorktreeGitRoutingEnvForOS removes inherited Git repository, index,
-// object, namespace, executable, template, and config routing. It deliberately
-// preserves non-routing controls such as GIT_OPTIONAL_LOCKS; the removal runner
-// applies its stricter policy separately.
+// object, namespace, executable, template, and config redirection. It
+// deliberately preserves non-routing controls such as GIT_OPTIONAL_LOCKS, and
+// the discovery/config fences (GIT_CEILING_DIRECTORIES, GIT_CONFIG_GLOBAL,
+// GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM), whose removal would widen rather
+// than narrow Git's authority; the removal runner applies its stricter policy
+// separately.
 func scrubWorktreeGitRoutingEnvForOS(env []string, goos string) []string {
 	return gitenv.ScrubRoutingForOS(env, goos)
 }
@@ -682,6 +685,14 @@ func scrubWorktreeRemovalGitEnv(env []string) []string {
 	return scrubWorktreeRemovalGitEnvForOS(env, runtime.GOOS)
 }
 
+// scrubWorktreeRemovalGitEnvForOS is the removal runner's stricter policy: on
+// top of the shared redirect scrub it also drops the inherited fences, because
+// newWorktreeRemovalGit re-pins GIT_CONFIG_GLOBAL/_SYSTEM/_NOSYSTEM to its own
+// values and must be able to discover the repository containing the worktree
+// it was asked to remove — an inherited GIT_CEILING_DIRECTORIES below that
+// repository would fail the removal outright. Dropping them here keeps this
+// runner's environment identical to the one it had before the shared scrub
+// began preserving fences.
 func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 	cleaned := scrubWorktreeGitRoutingEnvForOS(env, goos)
 	// ScrubRoutingForOS returns a fresh slice, so filtering it in place is safe.
@@ -689,6 +700,9 @@ func scrubWorktreeRemovalGitEnvForOS(env []string, goos string) []string {
 	for _, entry := range cleaned {
 		key := normalizeWorktreeGitEnvKey(worktreeGitEnvKey(entry), goos)
 		if key == "GIT_NO_REPLACE_OBJECTS" || key == "GIT_OPTIONAL_LOCKS" {
+			continue
+		}
+		if gitenv.IsFenceKeyForOS(key, goos) {
 			continue
 		}
 		result = append(result, entry)

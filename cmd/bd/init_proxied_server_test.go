@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage/dbproxy/proxy"
 	"github.com/steveyegge/beads/internal/storage/domain"
+	domaingit "github.com/steveyegge/beads/internal/storage/domain/git"
 	storagefs "github.com/steveyegge/beads/internal/storage/fs"
 	storagegit "github.com/steveyegge/beads/internal/storage/git"
 	"github.com/stretchr/testify/assert"
@@ -240,13 +241,7 @@ func TestIsTeamServerManaged_RequiresProxiedServerMode(t *testing.T) {
 }
 
 func TestProxiedInitTailRoleIgnoresInheritedGitRouting(t *testing.T) {
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)
@@ -296,7 +291,14 @@ func TestProxiedInitTailRoleIgnoresInheritedGitRouting(t *testing.T) {
 				cmd.Flags().Bool("setup-exclude", false, "")
 				// Existing flags exclude all filesystem integrations; nil fsUseCase must stay unused.
 				in := initProxiedServerInput{roleFlag: tc.flag, quiet: true, stealth: true, skipHooks: true, skipAgents: true}
-				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{gitUC: gitUC}))
+				// workDir is what production always supplies, and it is what
+				// makes the tail build its use case through the SELECTED
+				// constructor. Leaving it empty exercises a test-only fallback
+				// whose role boundary would have to come from a per-key
+				// exception inside the generic reader -- and such an exception
+				// also strips GIT_CONFIG_NOSYSTEM, hiding invalid routing
+				// booleans from the role command.
+				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, runInitTailContext{gitUC: gitUC, workDir: target}))
 				require.Equal(t, tc.want, runGit(t, target, "config", "--local", "--get", "beads.role"))
 				after, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
 				require.NoError(t, err)
@@ -321,14 +323,8 @@ func (u *proxiedRoleProbeUseCase) BeadsRole(ctx context.Context) (string, bool, 
 }
 
 func TestProxiedInitTailRoleProbeUsesSelectedDirectory(t *testing.T) {
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// isolateInheritedGitEnv pins GIT_CONFIG_NOSYSTEM=1 for this fixture too.
+	isolateInheritedGitEnv(t)
 	runGit := func(t *testing.T, dir string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
@@ -387,7 +383,13 @@ func TestProxiedInitTailRoleProbeUsesSelectedDirectory(t *testing.T) {
 			base := storagegit.NewGitProvider(target).GitUseCase()
 			require.Equal(t, tc.kind == "nonrepo", base.IsGitRepo(t.Context()), "inherited probe precondition")
 			if tc.kind == "nonrepo" {
-				role, found, err := base.BeadsRole(t.Context())
+				// Read the role through the SELECTED constructor -- the one
+				// runInitProxiedServerTail builds from workDir. `base` above
+				// is the generic constructor, which deliberately retains
+				// inherited routing for every key, so it is the right probe
+				// for the inherited precondition and the wrong one here.
+				selected := domain.NewGitUseCase(target, domaingit.NewInitGitRepository(target))
+				role, found, err := selected.BeadsRole(t.Context())
 				require.NoError(t, err)
 				require.True(t, found)
 				require.Equal(t, "global-role", role, "global config alone must not manufacture a repository")
@@ -430,13 +432,7 @@ func (f *initTailForkObservation) SetupForkExclude(context.Context, bool) error 
 }
 
 func TestProxiedInitTailGitUsesSelectedDirectory(t *testing.T) {
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			require.NoError(t, os.Unsetenv(key))
-		}
-	}
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)

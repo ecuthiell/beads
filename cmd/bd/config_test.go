@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -279,15 +278,7 @@ func TestBeadsRoleGitConfig(t *testing.T) {
 }
 
 func TestBeadsRoleCommandsIgnoreInheritedGitRouting(t *testing.T) {
-	for _, entry := range os.Environ() {
-		key := gitenv.EntryKey(entry)
-		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
-			t.Setenv(key, "")
-			if err := os.Unsetenv(key); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	isolateInheritedGitEnv(t)
 	home := t.TempDir()
 	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, home)

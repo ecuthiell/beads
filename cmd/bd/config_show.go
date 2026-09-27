@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/workapi"
 )
@@ -332,8 +333,11 @@ func databaseConfigEntries(dbConfig map[string]string) []configEntry {
 func collectGitConfigEntries() []configEntry {
 	var entries []configEntry
 
-	// beads.role is the only git config key currently
+	// beads.role is the only git config key currently. Scrubbed like the other
+	// role surfaces so `bd config show` reports the role bd actually routes
+	// with rather than one an inherited GIT_DIR selected.
 	cmd := exec.Command("git", "config", "--get", "beads.role")
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
 	output, err := cmd.Output()
 	if err == nil {
 		value := strings.TrimSpace(string(output))
