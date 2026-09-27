@@ -662,3 +662,89 @@ func TestInitHooksEmptyPathRetainsUseCase(t *testing.T) {
 	require.Same(t, supplied, fs)
 	require.Nil(t, hooks)
 }
+
+func TestProxiedInitLegacyRelativeHooksUseResolvedStorage(t *testing.T) {
+	for _, name := range []string{"shared_fallback", "worktree_local", "explicit_external"} {
+		t.Run(name, func(t *testing.T) {
+			selected, decoy, external, common := newInitHooksFixture(t)
+			mainRoot := filepath.Dir(common)
+			t.Setenv("BEADS_DIR", "")
+			storage := filepath.Join(mainRoot, ".beads")
+			switch name {
+			case "worktree_local":
+				storage = filepath.Join(selected, ".beads")
+			case "explicit_external":
+				storage = external
+				t.Setenv("BEADS_DIR", storage)
+			}
+			destination := filepath.Join(storage, "hooks")
+			require.NoError(t, os.MkdirAll(destination, 0755))
+			// An unmanaged hook proves Git executes the activated directory without
+			// invoking bd or a database. The install must preserve this hook.
+			const sentinel = "#!/bin/sh\nprintf 'selected-storage-hook\\n'\n"
+			sentinelPath := filepath.Join(destination, "post-rewrite")
+			require.NoError(t, os.WriteFile(sentinelPath, []byte(sentinel), 0755))
+			initExcludeGit(t, selected, "config", "--local", "core.hooksPath", ".beads/hooks")
+			require.Equal(t, ".beads/hooks", initExcludeGit(t, selected, "config", "--get", "core.hooksPath"))
+			initExcludeGit(t, selected, "config", "--global", "beads.test-marker", "global")
+			initExcludeGit(t, selected, "config", "extensions.worktreeConfig", "true")
+			initExcludeGit(t, selected, "config", "--worktree", "beads.test-marker", "private")
+			private := filepath.Join(initExcludeGit(t, selected, "rev-parse", "--absolute-git-dir"), "config.worktree")
+			preserved := map[string][]byte{}
+			for _, path := range []string{private, filepath.Join(os.Getenv("HOME"), ".gitconfig"), filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "index")} {
+				preserved[path] = readInitHooksFile(t, path)
+			}
+
+			// Resolve storage through the production provider: merely resolving the
+			// relative hooks path would not exercise the selected install target.
+			fs := storagefs.NewFileSystemProvider(selected, newBeadsDirTemplates(), newInitFileSystemAdapters(selected)).BeadsDirFSUseCase()
+			resolved, err := fs.ResolveProxiedInit(t.Context(), domain.ResolveProxiedInitParams{Prefix: "fixture"})
+			require.NoError(t, err)
+			gotStorage, err := os.Stat(resolved.BeadsDir)
+			require.NoError(t, err)
+			wantStorage, err := os.Stat(storage)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(gotStorage, wantStorage), "resolved storage %q must identify %q", resolved.BeadsDir, storage)
+			require.Equal(t, name == "explicit_external", resolved.HasExplicit)
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("setup-exclude", false, "")
+			in := initProxiedServerInput{skipAgents: true, nonInteractive: true}
+			tail := runInitTailContext{workDir: selected, beadsDir: resolved.BeadsDir, remoteURL: "file:///unused-hooks-fixture-remote", fsUseCase: fs}
+			env := os.Environ()
+			stderr := captureStderr(t, func() {
+				require.NoError(t, runInitProxiedServerTail(cmd, t.Context(), in, tail))
+			})
+			require.Empty(t, stderr)
+			configured := initExcludeGit(t, selected, "config", "--file", filepath.Join(common, "config"), "--get", "core.hooksPath")
+			require.True(t, filepath.IsAbs(configured), "shared hooks path must be absolute: %q", configured)
+			gotTarget, err := os.Stat(configured)
+			require.NoError(t, err)
+			wantTarget, err := os.Stat(destination)
+			require.NoError(t, err)
+			require.True(t, os.SameFile(gotTarget, wantTarget), "common config must name the installed hooks directory")
+			for _, hook := range managedHookNames {
+				require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, hook))), hookSectionBeginPrefix)
+			}
+			require.Equal(t, sentinel, string(readInitHooksFile(t, sentinelPath)))
+			for _, dir := range []string{mainRoot, selected} {
+				require.Equal(t, configured, initExcludeGit(t, dir, "config", "--get", "core.hooksPath"))
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				hookCmd := exec.CommandContext(ctx, "git", "hook", "run", "post-rewrite")
+				hookCmd.Dir, hookCmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+				hookCmd.WaitDelay = 2 * time.Second
+				out, err := hookCmd.CombinedOutput()
+				cancel()
+				require.NoError(t, err, "execute activated hook from %s: %s", dir, out)
+				require.Equal(t, "selected-storage-hook", strings.TrimSpace(string(out)))
+			}
+			if name != "worktree_local" {
+				_, err := os.Stat(filepath.Join(selected, ".beads"))
+				require.ErrorIs(t, err, os.ErrNotExist, "legacy relative path must not create worktree-local storage")
+			}
+			for path, before := range preserved {
+				require.Equal(t, before, readInitHooksFile(t, path), "changed %s", path)
+			}
+			require.Equal(t, env, os.Environ())
+		})
+	}
+}
