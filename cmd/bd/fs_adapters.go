@@ -67,10 +67,10 @@ type initHooksFileSystem struct {
 	hooks *initHooksContext
 }
 
-func (fs initHooksFileSystem) InstallGitHooks(_ context.Context, p domain.HooksInstallParams) error {
-	return installHooksWithContext(p.HookNames, p.Force, p.Shared, p.Chain, p.BeadsHooks, fs.hooks)
+func (fs initHooksFileSystem) InstallGitHooks(ctx context.Context, p domain.HooksInstallParams) error {
+	return installHooksWithContext(ctx, p.HookNames, p.Force, p.Shared, p.Chain, p.BeadsHooks, fs.hooks)
 }
 
-func (fs initHooksFileSystem) InstallJJHooks(_ context.Context) error {
-	return installHooksWithContext(jjHookNames, false, false, false, false, fs.hooks)
+func (fs initHooksFileSystem) InstallJJHooks(ctx context.Context) error {
+	return installHooksWithContext(ctx, jjHookNames, false, false, false, false, fs.hooks)
 }

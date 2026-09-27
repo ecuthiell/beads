@@ -47,14 +47,14 @@ func runEmbeddedInitHooks(ctx context.Context, workDir, beadsDir string, skip, q
 		fmt.Printf("  Updating hooks to version %s...\n", Version)
 	}
 	if isColocated {
-		if err := installHooksWithContext(jjHookNames, false, false, false, false, hooks); err != nil && !quiet {
+		if err := installHooksWithContext(ctx, jjHookNames, false, false, false, false, hooks); err != nil && !quiet {
 			fmt.Fprintf(os.Stderr, "\n%s Failed to install jj hooks: %v\n", ui.RenderWarn("⚠"), err)
 			fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
 		} else if !quiet {
 			fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
 		}
 	} else {
-		if err := installHooksWithContext(managedHookNames, false, false, false, true, hooks); err != nil && !quiet {
+		if err := installHooksWithContext(ctx, managedHookNames, false, false, false, true, hooks); err != nil && !quiet {
 			fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
 			fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
 		} else if !quiet {
@@ -412,13 +412,13 @@ func (c *initHooksContext) needsUpdate() bool {
 	return hookStatusesNeedUpdate(checkGitHooksAt(c.paths.HooksDir))
 }
 
-func (c *initHooksContext) configureHooksPath(hooksDir string) error {
+func (c *initHooksContext) configureHooksPath(ctx context.Context, hooksDir string) error {
 	// #nosec G702 -- no shell is involved: the binary is the literal "git" and
 	// every path is passed as its own argv element, so neither c.paths.CommonDir
 	// nor hooksDir can inject a command. Both reach here from the selected hooks
 	// context and are absolute, and this mirrors the pre-existing
 	// configureBeadsHooksPath in hooks.go.
-	cmd := exec.Command("git", "--git-dir", c.paths.CommonDir, "config", "--local", "core.hooksPath", hooksDir)
+	cmd := exec.CommandContext(ctx, "git", "--git-dir", c.paths.CommonDir, "config", "--local", "core.hooksPath", hooksDir)
 	cmd.Dir, cmd.Env = c.workDir, c.env
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))

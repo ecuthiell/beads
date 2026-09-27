@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -694,7 +695,7 @@ Installed hooks:
 		chain, _ := cmd.Flags().GetBool("chain")
 		beadsHooks, _ := cmd.Flags().GetBool("beads")
 
-		if err := installHooksWithOptions(managedHookNames, force, shared, chain, beadsHooks); err != nil {
+		if err := installHooksWithContext(cmd.Context(), managedHookNames, force, shared, chain, beadsHooks, nil); err != nil {
 			return HandleErrorRespectJSON("installing hooks: %v", err)
 		}
 
@@ -888,11 +889,11 @@ func isGitTrackedFileWithEnv(path string, clean, inherited []string) bool {
 }
 
 func installHooksWithOptions(hookNames []string, force bool, shared bool, chain bool, beadsHooks bool) error {
-	return installHooksWithContext(hookNames, force, shared, chain, beadsHooks, nil)
+	return installHooksWithContext(context.Background(), hookNames, force, shared, chain, beadsHooks, nil)
 }
 
 //nolint:unparam // force and chain kept for CLI flag compatibility; section markers make them no-ops
-func installHooksWithContext(hookNames []string, force, shared, chain, beadsHooks bool, selected *initHooksContext) error {
+func installHooksWithContext(ctx context.Context, hookNames []string, force, shared, chain, beadsHooks bool, selected *initHooksContext) error {
 	if selected != nil && shared {
 		return fmt.Errorf("shared hooks mode is not supported by selected init")
 	}
@@ -1023,15 +1024,15 @@ func installHooksWithContext(hookNames []string, force, shared, chain, beadsHook
 
 	// Configure git to use the hooks directory after writing, as in ordinary installs.
 	if selected != nil && beadsHooks {
-		if err := selected.configureHooksPath(hooksDir); err != nil {
+		if err := selected.configureHooksPath(ctx, hooksDir); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)
 		}
 	} else if beadsHooks {
-		if err := configureBeadsHooksPath(); err != nil {
+		if err := configureBeadsHooksPathWithContext(ctx); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)
 		}
 	} else if shared {
-		if err := configureSharedHooksPath(); err != nil {
+		if err := configureSharedHooksPathWithContext(ctx); err != nil {
 			return fmt.Errorf("failed to configure git hooks path: %w", err)
 		}
 	}
@@ -1333,6 +1334,10 @@ func isHuskyHelperSourceLine(line string) bool {
 }
 
 func configureSharedHooksPath() error {
+	return configureSharedHooksPathWithContext(context.Background())
+}
+
+func configureSharedHooksPathWithContext(ctx context.Context) error {
 	// Set git config core.hooksPath to an absolute path pointing to .beads-hooks.
 	// Using an absolute path is critical for git worktrees (GH#2414):
 	// git resolves relative core.hooksPath relative to the working tree root.
@@ -1344,7 +1349,7 @@ func configureSharedHooksPath() error {
 		return fmt.Errorf("not in a git repository")
 	}
 	absHooksPath := filepath.Join(repoRoot, ".beads-hooks")
-	cmd := exec.Command("git", "config", "core.hooksPath", absHooksPath)
+	cmd := exec.CommandContext(ctx, "git", "config", "core.hooksPath", absHooksPath)
 	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))
@@ -1353,6 +1358,10 @@ func configureSharedHooksPath() error {
 }
 
 func configureBeadsHooksPath() error {
+	return configureBeadsHooksPathWithContext(context.Background())
+}
+
+func configureBeadsHooksPathWithContext(ctx context.Context) error {
 	// Set git config core.hooksPath to an absolute path pointing to .beads/hooks.
 	// Using an absolute path is critical for git worktrees (GH#2414):
 	// git resolves relative core.hooksPath relative to the working tree root,
@@ -1366,7 +1375,7 @@ func configureBeadsHooksPath() error {
 		return fmt.Errorf("not in a git repository")
 	}
 	absHooksPath := filepath.Join(repoRoot, ".beads", "hooks")
-	cmd := exec.Command("git", "config", "core.hooksPath", absHooksPath)
+	cmd := exec.CommandContext(ctx, "git", "config", "core.hooksPath", absHooksPath)
 	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))
