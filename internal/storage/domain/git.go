@@ -76,9 +76,10 @@ type CommitInitArtifactsResult struct {
 	DidCommit   bool
 }
 
-// BeadsRoleConfigKey is the git config key holding the maintainer/contributor
-// role. It is exported so the repository adapter special-cases the same key
-// this package reads and writes, instead of mirroring the literal.
+// BeadsRoleConfigKey is the git config key that carries role authority.
+// It is exported because the GitRepository adapters select the strict
+// role-authority environment on this key, so the two sides must not drift into
+// separate spellings of one contract.
 const BeadsRoleConfigKey = "beads.role"
 
 func NewGitUseCase(workDir string, repo GitRepository) GitUseCase {
