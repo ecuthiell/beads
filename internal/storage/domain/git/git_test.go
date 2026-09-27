@@ -54,6 +54,7 @@ func (s *testSuite) TestConfig_GetMissing() {
 // Regression guard: silent invalid-key rejection already appeared absent.
 func (s *testSuite) TestConfig_SilentInvalidKeyAppearsAbsent() {
 	s.gitInit()
+	s.run("git", "config", "core.hooksPath", ".git/hooks")
 	const key = "bad..key"
 	cmd := exec.CommandContext(s.Ctx(), "git", "config", "--get", key)
 	cmd.Dir = s.tmpDir
