@@ -1999,7 +1999,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 			if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 			}
-		} else if !stealth && isGitRepo() {
+		} else if !stealth && isInitRoleGitRepo(ctx) {
 			// Auto-detect fork and prompt (skip if stealth - it handles exclude already)
 			if isFork, upstreamURL := detectForkSetup(); isFork {
 				if nonInteractive {

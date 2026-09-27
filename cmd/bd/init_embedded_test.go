@@ -1530,7 +1530,7 @@ func TestEmbeddedInitSelectedExcludeRouting(t *testing.T) {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt init tests")
 	}
 	bd := buildEmbeddedBD(t)
-	for _, name := range []string{"stealth_decoy", "stealth_invalid", "fork_decoy", "fork_invalid", "quiet_stealth", "quiet_fork"} {
+	for _, name := range []string{"stealth_decoy", "stealth_invalid", "fork_decoy", "fork_invalid", "quiet_stealth", "quiet_fork", "fork_auto_invalid"} {
 		t.Run(name, func(t *testing.T) {
 			target, decoy, home := newInitRoleFixture(t)
 			global := filepath.Join(home, ".gitconfig")
@@ -1560,6 +1560,18 @@ func TestEmbeddedInitSelectedExcludeRouting(t *testing.T) {
 			if stealth {
 				args = append(args, "--stealth")
 				want, banner = ".claude/settings.local.json", "Stealth mode configured successfully!"
+			} else if strings.Contains(name, "auto") {
+				// Auto-detect arm: without --setup-exclude the exclude write is
+				// reached only through the fork auto-detect gate, so this row
+				// covers that gate's own repository probe rather than the
+				// already-hardened writer. An upstream remote makes the scrubbed
+				// detectForkSetup report a fork; --role=maintainer keeps
+				// autoConfigureForkContributor an early return, so the gate is
+				// the only path that can add the pattern.
+				initRoleFixtureGit(t, target, "remote", "add", "upstream", filepath.Join(home, "upstream.git"))
+				if isGitRepo() {
+					t.Fatal("invalid routing must refuse the inherited repository probe")
+				}
 			} else {
 				args = append(args, "--setup-exclude")
 			}
