@@ -225,18 +225,9 @@ func EnsureGitignoreForBeadsDir(beadsDir string) error {
 		return nil
 	}
 
-	existingContent := string(content)
-	newContent := existingContent
-	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
-	}
-
-	newContent += "\n# Added by bd (missing required patterns)\n"
-	for _, pattern := range missing {
-		newContent += pattern + "\n"
-	}
-
-	if err := os.WriteFile(gitignorePath, []byte(newContent), 0600); err != nil {
+	lines := append([]string{"", "# Added by bd (missing required patterns)"}, missing...)
+	newContent := gitignore.AppendLines(content, lines)
+	if err := os.WriteFile(gitignorePath, newContent, 0600); err != nil {
 		return fmt.Errorf("ensure .beads/.gitignore: %w", err)
 	}
 

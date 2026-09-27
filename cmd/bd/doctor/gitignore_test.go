@@ -370,6 +370,45 @@ daemon.log
 	}
 }
 
+func TestEnsureGitignoreForBeadsDir_PreservesAppendLineEndings(t *testing.T) {
+	lfPatterns := strings.Join(requiredPatterns, "\n") + "\n"
+	crlfPatterns := strings.Join(requiredPatterns, "\r\n") + "\r\n"
+	lfBlock := "\n# Added by bd (missing required patterns)\n" + lfPatterns
+	crlfBlock := "\r\n# Added by bd (missing required patterns)\r\n" + crlfPatterns
+	for _, tc := range []struct {
+		name, existing, want string
+	}{
+		{"empty", "", lfBlock},
+		{"delimiter-free", "!issues.jsonl", "!issues.jsonl\n" + lfBlock},
+		{"LF", "!issues.jsonl\n", "!issues.jsonl\n" + lfBlock},
+		{"CRLF", "!issues.jsonl\r\n", "!issues.jsonl\r\n" + crlfBlock},
+		{"CRLF unterminated", "!issues.jsonl\r\nlocal", "!issues.jsonl\r\nlocal\r\n" + crlfBlock},
+		{"CRLF pending CR", "!issues.jsonl\r\nlocal\r", "!issues.jsonl\r\nlocal\r\n" + crlfBlock},
+		{"mixed", "a\r\nb\n", "a\r\nb\n" + lfBlock},
+		{"complete CRLF", crlfPatterns, crlfPatterns},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			beadsDir := t.TempDir()
+			path := filepath.Join(beadsDir, ".gitignore")
+			if err := os.WriteFile(path, []byte(tc.existing), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for call := 1; call <= 2; call++ {
+				if err := EnsureGitignoreForBeadsDir(beadsDir); err != nil {
+					t.Fatalf("call %d: %v", call, err)
+				}
+				got, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != tc.want {
+					t.Fatalf("call %d: got %q, want %q", call, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestEnsureGitignoreForBeadsDir_AppendsMissingRuntimePatterns(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
