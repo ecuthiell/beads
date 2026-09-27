@@ -108,34 +108,28 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}
 }
 
-// TestConfig_ReadFailuresAreNotMissing used to carry an "invalid_routing_boolean"
-// row that poisoned GIT_CONFIG_NOSYSTEM and expected the beads.role read to fail.
-// beads.role reads now scrub inherited Git routing, so that poison never reaches
-// git for this key and the read succeeds. The row is replaced by the pair below,
-// which pins both halves of the new contract. The general "a read failure is an
-// error, not an absent key" guard is unaffected: malformed_config still proves it
-// for the same key through the repository's own config file.
-func (s *testSuite) TestConfig_BeadsRoleScrubsInheritedRoutingEnv() {
+// Constructor policy applies to every key, including beads.role. Real Git
+// diagnostics remain errors for the generic inherited-environment adapter.
+func (s *testSuite) TestConfig_ConstructorSelectsEnvironmentPolicy() {
 	s.gitInit()
 	s.Require().NoError(s.repo.SetConfig(s.Ctx(), "beads.role", "maintainer"))
 	s.T().Setenv("GIT_CONFIG_NOSYSTEM", "not-a-boolean")
 
-	// beads.role is read with routing scrubbed, so the poisoned value is gone
-	// before git parses its environment.
-	value, found, err := s.repo.GetConfig(s.Ctx(), "beads.role")
+	selected := NewInitGitRepository(s.tmpDir)
+	value, found, err := selected.GetConfig(s.Ctx(), "beads.role")
 	s.Require().NoError(err)
 	s.True(found)
 	s.Equal("maintainer", value)
 
-	// Keys outside that scrub keep the inherited environment, so the same poison
-	// still surfaces as a read error rather than as an absent key.
-	value, found, err = s.repo.GetConfig(s.Ctx(), "user.name")
-	s.Require().Error(err)
-	s.False(found)
-	s.Empty(value)
-	var exitErr *exec.ExitError
-	s.Require().ErrorAs(err, &exitErr)
-	s.Equal(128, exitErr.ExitCode())
+	for _, key := range []string{"beads.role", "user.name"} {
+		value, found, err = s.repo.GetConfig(s.Ctx(), key)
+		s.Require().Error(err, key)
+		s.False(found)
+		s.Empty(value)
+		var exitErr *exec.ExitError
+		s.Require().ErrorAs(err, &exitErr)
+		s.Equal(128, exitErr.ExitCode())
+	}
 }
 
 // Regression guard: pre-canceled contexts already propagated before the config fix.
@@ -321,7 +315,7 @@ func (s *testSuite) TestExec_HappensInWorkDir() {
 	s.True(info.IsDir())
 }
 
-func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
+func TestRoleConfigUsesConstructorEnvironment(t *testing.T) {
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)
 		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
@@ -369,14 +363,14 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 			}
 			globalPath := filepath.Join(home, ".gitconfig")
 			require.NoError(t, os.WriteFile(globalPath, []byte(global), 0600))
-			wantGeneric, changedDir := "decoy", decoy
+			wantGeneric, wantGenericRole, changedDir := "decoy", "decoy-role", decoy
 			if tc.name == "inline_config" {
 				t.Setenv("GIT_CONFIG_COUNT", "2")
 				t.Setenv("GIT_CONFIG_KEY_0", "beads.role")
 				t.Setenv("GIT_CONFIG_VALUE_0", "injected-role")
 				t.Setenv("GIT_CONFIG_KEY_1", "test.marker")
 				t.Setenv("GIT_CONFIG_VALUE_1", "injected-marker")
-				wantGeneric, changedDir = "injected-marker", target
+				wantGeneric, wantGenericRole, changedDir = "injected-marker", "injected-role", target
 			} else {
 				t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
 				t.Setenv("GIT_WORK_TREE", decoy)
@@ -384,8 +378,7 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 			env := os.Environ()
 			before, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
 			require.NoError(t, err)
-			repo := NewGitRepository(target)
-			useCase := domain.NewGitUseCase(target, repo)
+			useCase := domain.NewGitUseCase(target, NewInitGitRepository(target))
 			got, found, err := useCase.BeadsRole(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
@@ -395,7 +388,14 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 			after, err := os.ReadFile(filepath.Join(decoy, ".git", "config"))
 			require.NoError(t, err)
 			require.Equal(t, string(before), string(after), "role write changed decoy")
-			// Ordinary config commands keep their existing inherited context.
+			// The generic constructor inherits the same environment for every key.
+			repo := NewGitRepository(target)
+			got, found, err = repo.GetConfig(t.Context(), "beads.role")
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, wantGenericRole, got)
+			require.NoError(t, repo.SetConfig(t.Context(), "beads.role", "inherited role"))
+			require.Equal(t, "inherited role", runGit(t, changedDir, "config", "--local", "--get", "beads.role"))
 			got, found, err = repo.GetConfig(t.Context(), "test.marker")
 			require.NoError(t, err)
 			require.True(t, found)

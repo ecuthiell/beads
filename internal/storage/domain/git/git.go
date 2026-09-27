@@ -107,9 +107,6 @@ func (r *gitRepositoryImpl) GetConfig(ctx context.Context, key string) (string, 
 		return "", false, fmt.Errorf("git: GetConfig: key must not be empty")
 	}
 	cmd := r.gitCmd(ctx, "config", "--get", key)
-	if key == "beads.role" && r.env == nil {
-		cmd.Env = gitenv.ScrubRouting(os.Environ())
-	}
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -134,9 +131,6 @@ func (r *gitRepositoryImpl) SetConfig(ctx context.Context, key, value string) er
 		return fmt.Errorf("git: SetConfig: key must not be empty")
 	}
 	cmd := r.gitCmd(ctx, "config", key, value)
-	if key == "beads.role" && r.env == nil {
-		cmd.Env = gitenv.ScrubRouting(os.Environ())
-	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git: SetConfig %s: %w: %s", key, err, bytes.TrimSpace(out))
