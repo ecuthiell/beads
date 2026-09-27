@@ -116,6 +116,44 @@ Examples:
 
 var forceGitTracked bool
 
+// newRoleConfigWriter captures fresh cwd and scrubbed routing once per write
+// operation. The process-wide Git cache and Beads storage do not select it.
+// Routing is scrubbed along with the suppression ScrubRouting deliberately
+// keeps: beads.role is an authority value, and the reader it feeds treats a
+// missing value as maintainer, so a suppressed config file would fail open.
+func newRoleConfigWriter() (func(...string) error, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	env := gitenv.ScrubRoutingAndSuppression(os.Environ())
+	probe := exec.Command("git", "rev-parse", "--git-common-dir")
+	probe.Dir, probe.Env = dir, env
+	out, err := probe.Output()
+	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return nil, fmt.Errorf("resolving common Git config: %w", err)
+	}
+	commonDir := git.NormalizePath(strings.TrimSpace(string(out)))
+	if commonDir == "" {
+		return nil, fmt.Errorf("Git returned an empty common directory")
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(dir, commonDir)
+	}
+	return func(args ...string) error {
+		// Callers supply only the fixed role key, validated values and unset flag.
+		cmd := exec.Command("git", append([]string{"--git-dir", commonDir, "config", "--local"}, args...)...) //nolint:gosec // private validated config operations
+		cmd.Dir, cmd.Env = dir, env
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}, nil
+}
+
 var configSetCmd = &cobra.Command{
 	Use:           "set <key> <value>",
 	Short:         "Set a configuration value",
@@ -199,12 +237,21 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// Role commands discard inherited Git config routing, including the
-			// suppression ScrubRouting keeps: beads.role is an authority value, and
-			// the reader it feeds treats a missing value as maintainer.
-			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
-			if err := cmd.Run(); err != nil {
+			// bd config's own beads.role reads and writes ignore inherited Git
+			// routing, including GIT_CONFIG_GLOBAL, so the value lands in the
+			// repository this command selected. beads.role is an authority
+			// value and the reader it feeds treats a missing value as
+			// maintainer, so these planes also discard the explicit suppression
+			// ScrubRouting deliberately keeps -- otherwise a blinded read fails
+			// open instead of erroring. That boundary is uniform across
+			// routing.DetectUserRole, `bd config show`, `bd doctor`,
+			// `bd hooks uninstall` and beads.RepoContext.Role, which re-pins
+			// GIT_DIR/GIT_WORK_TREE last-wins on top of it.
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("setting beads.role in git config: %v", err)
+			}
+			if err := write("beads.role", value); err != nil {
 				return HandleError("setting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -348,6 +395,7 @@ var configGetCmd = &cobra.Command{
 		}
 
 		if key == "beads.role" {
+			// Same role-authority boundary as `bd config set` above.
 			cmd := exec.Command("git", "config", "--get", "beads.role")
 			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 			output, err := cmd.Output()
@@ -605,9 +653,11 @@ var configUnsetCmd = &cobra.Command{
 			// Same role-authority boundary as `bd config set`/`get` above: every
 			// spelling of a beads.role mutation resolves the repository the same
 			// way, so the next reader has one boundary to reason about.
-			gitCmd := exec.Command("git", "config", "--unset", "beads.role")
-			gitCmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
-			if err := gitCmd.Run(); err != nil {
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("unsetting beads.role in git config: %v", err)
+			}
+			if err := write("--unset", "beads.role"); err != nil {
 				return HandleError("unsetting beads.role in git config: %v", err)
 			}
 			if jsonOutput {
@@ -897,13 +947,17 @@ Examples:
 			}
 		}
 
-		for _, p := range gitPairs {
+		if len(gitPairs) > 0 {
 			// set-many is the batch alias for `bd config set`, so it runs on the
 			// same role-authority boundary that verb does.
-			cmd := exec.Command("git", "config", "beads.role", p.value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
-			if err := cmd.Run(); err != nil {
-				return HandleError("setting %s in git config: %v", p.key, err)
+			write, err := newRoleConfigWriter()
+			if err != nil {
+				return HandleError("setting beads.role in git config: %v", err)
+			}
+			for _, p := range gitPairs {
+				if err := write("beads.role", p.value); err != nil {
+					return HandleError("setting %s in git config: %v", p.key, err)
+				}
 			}
 		}
 
