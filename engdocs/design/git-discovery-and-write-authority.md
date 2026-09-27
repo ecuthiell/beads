@@ -27,6 +27,44 @@ inherited `GIT_DIR`.
 Process-lifetime environment clearing remains an explicit command boundary.
 It must not become a side effect of calling a read-only discovery helper.
 
+## Config and workspace discovery must agree
+
+The `bd-5p25o` follow-up in the
+[#6453 adoption review](https://github.com/gastownhall/beads/pull/6453#issuecomment-5854396392)
+names two remaining workspace probes. At reviewed head
+`a8464cff97eee5b2806aaa212b8ea6825c5b258c`, pending adoption, the relevant sites
+are:
+
+| Probe | Selection at that head | Consumer |
+| --- | --- | --- |
+| `internal/config/config.go:gitDirsForRepo` | `git -C repoPath rev-parse --git-dir --git-common-dir`, with routing scrubbed | Shared-worktree config fallback during initialization |
+| `internal/beads/beads.go:worktreeFallbackBeadsDirForRepo` | The same two-result query, with inherited environment | Shared `.beads` fallback, including `ResolveBeadsDirForRepo` |
+| `internal/beads/context.go:getGitCommonDirForPath` | `git -C path rev-parse --git-common-dir`, with inherited environment | External-workspace classification in `isExternalBeadsDir` |
+
+The two workspace queries are separate sites, not identical argument lists.
+Inherited routing can select a different repository despite `-C`, so the config
+probe can answer for repository A while workspace fallback or classification
+answers for B. Main `54dd4da6708558840f88863266b9ca702893feb1` also retains these
+two inherited workspace probes. This inventory is not a claim the code gap has
+been closed.
+
+For an explicitly selected path, the proposed migration is to make these config
+and workspace consumers use the same selected context and declared environment
+policy. Inventory the implicit callers before sharing that behavior: preserve
+their legitimate inherited bare/external-worktree selection and the legacy
+process-cache lifetime described above. Do not globally scrub cached discovery
+or settle [#5700](https://github.com/gastownhall/beads/issues/5700) by implication.
+
+Acceptance must select a target linked worktree and a decoy through inherited
+`GIT_DIR`/`GIT_WORK_TREE`, then compare the config file, shared `.beads` location,
+and external-workspace classification. They must agree under the chosen explicit
+selection contract. Also exercise a legitimate inherited bare/external worktree
+and stale-cache/cwd transitions for implicit discovery. Read-only probes must
+leave both repositories unchanged; any later write must affect only the selected
+context. Compose with [#6384](https://github.com/gastownhall/beads/issues/6384)
+and [#6461](https://github.com/gastownhall/beads/pull/6461) for role/accessor and
+value-aware config-control behavior instead of duplicating those fixes.
+
 ## Hook configuration writes
 
 Once an operation selects its hook context, write `core.hooksPath` only in that
@@ -45,8 +83,8 @@ Caller cancellation belongs to the operation and must reach config subprocesses;
 
 At main `511849496b33b607d60489962382d0bc781a50b4`, the legacy
 `internal/git.initGitContext` uses inherited state and caches its result. The
-following implementations are pending PRs, not capabilities this document
-claims have shipped:
+following PRs own the related implementations; reconcile their adopted versions
+before migrating another caller:
 
 - [#6436](https://github.com/gastownhall/beads/pull/6436) owns the explicit,
   read-only hook-context resolver.
