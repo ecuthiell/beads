@@ -119,6 +119,40 @@ func TestScrubRoutingUsesHostKeySemantics(t *testing.T) {
 	}
 }
 
+// Git's two discovery-boundary variables must survive the scrub on both
+// boundaries, for opposite reasons: GIT_CEILING_DIRECTORIES withholds
+// authority, so scrubbing it widens repository selection instead of narrowing
+// it, while GIT_DISCOVERY_ACROSS_FILESYSTEM is permit-only and is retained as
+// the deliberate trade documented on routingKeys.
+func TestScrubRoutingRetainsDiscoveryFences(t *testing.T) {
+	for _, key := range []string{"GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"} {
+		for _, goos := range []string{"linux", "windows"} {
+			if IsRoutingKeyForOS(key, goos) {
+				t.Errorf("IsRoutingKeyForOS(%q, %q) = true, want false: scrubbing a discovery fence widens authority", key, goos)
+			}
+		}
+	}
+
+	// GIT_DISCOVERY_ACROSS_FILESYSTEM is permit-only, so =0 is git's own default
+	// and a fixture that carries only =0 would still pass if the no-op value
+	// were the only one retained. =1 is the value whose retention is the
+	// deliberate trade documented on routingKeys, so pin both.
+	for _, discovery := range []string{"0", "1"} {
+		input := []string{
+			"GIT_CEILING_DIRECTORIES=/fenced",
+			"GIT_DISCOVERY_ACROSS_FILESYSTEM=" + discovery,
+			"GIT_DIR=/wrong",
+			"GIT_CONFIG_COUNT=1",
+		}
+		want := []string{"GIT_CEILING_DIRECTORIES=/fenced", "GIT_DISCOVERY_ACROSS_FILESYSTEM=" + discovery}
+		for _, goos := range []string{"linux", "windows"} {
+			if got := ScrubRoutingForOS(input, goos); !reflect.DeepEqual(got, want) {
+				t.Errorf("ScrubRoutingForOS(_, %q) with GIT_DISCOVERY_ACROSS_FILESYSTEM=%s = %q, want %q", goos, discovery, got, want)
+			}
+		}
+	}
+}
+
 func TestClearRoutingPreservesNonRoutingGitControls(t *testing.T) {
 	type envEntry struct {
 		key   string

@@ -199,7 +199,19 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// All role commands ignore inherited Git routing, including GIT_CONFIG_GLOBAL.
+			// This write discards inherited Git routing so it cannot be retargeted
+			// at another repository. The boundary covers the role writers in this
+			// file only. Still following inherited routing, and hardened in
+			// follow-ups (bd-dz16y): the readers that resolve
+			// maintainer-vs-contributor (internal/routing, beads.RepoContext,
+			// bd config show, bd doctor role, bd hooks), and bd init's own role
+			// accessors -- getBeadsRole/setBeadsRole in init.go plus the
+			// contributor-routing write in init_contributor.go. Because one of the
+			// uncovered planes is itself a writer, a poisoned environment can make
+			// not only a scrubbed write and an unscrubbed read disagree, but two
+			// writes: `bd init --role` can persist beads.role into the inherited
+			// routing target while this site writes the scrubbed one, so a later
+			// `bd config get` reads a value bd init never wrote.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
 			cmd.Env = gitenv.ScrubRouting(os.Environ())
 			if err := cmd.Run(); err != nil {

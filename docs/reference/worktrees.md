@@ -12,10 +12,14 @@ separate from Git branch commits.
 All worktrees in the same repository use the same beads workspace unless you
 override discovery with `BEADS_DIR`.
 
-Startup Git discovery probes for every `bd` command scrub inherited Git routing
-variables such as `GIT_DIR` and `GIT_WORK_TREE` from their subprocess environment.
-Clearing those variables from the `bd` process environment applies only to
-`bd worktree` commands.
+The startup probe that locates the Git config directory scrubs inherited Git
+routing variables such as `GIT_DIR` and `GIT_WORK_TREE` from its subprocess
+environment. Beads-directory discovery does not scrub yet, so under inherited
+routing the config file and the `.beads` workspace can resolve to different
+repositories. Discovery fences such as `GIT_CEILING_DIRECTORIES` are always
+preserved, because removing one would widen repository selection rather than
+narrow it. Clearing routing variables from the `bd` process environment applies
+only to `bd worktree` commands.
 
 ```
 project/

@@ -11,12 +11,46 @@ import (
 	"github.com/steveyegge/beads/internal/execenv"
 )
 
+// routingKeys name Git environment variables that redirect Git away from an
+// explicit working directory, or replace its repository, index, object,
+// namespace, executable, template, or config authority. Scrubbing one of these
+// narrows the authority a child process inherits, which is the point of this
+// package.
+//
+// Git's two discovery-boundary variables are both deliberately absent, but for
+// opposite reasons, because their polarity is opposite.
+//
+// GIT_CEILING_DIRECTORIES withholds authority: it bounds how far Git may walk
+// up from its starting directory, so removing it widens repository selection
+// instead of narrowing it. Under GIT_CEILING_DIRECTORIES=$P/child, the command
+// `git -C $P/child/sub config beads.role maintainer` is refused (exit 128), but
+// with the ceiling scrubbed it succeeds and writes the privileged role into
+// $P/.git/config. Every call site here is a discovery call against a path that
+// is not guaranteed to be a repository root, and -C names a directory rather
+// than a repository, so an explicit directory does not substitute for the
+// fence. A caller that wants its working directory to be the boundary must
+// supply its own ceiling -- GIT_CEILING_DIRECTORIES=<parent of the intended
+// root> -- instead of deleting the operator's. newWorktreeRemovalGit in
+// cmd/bd/worktree_cmd.go is the precedent for that supply-your-own pattern,
+// but only on the config plane (GIT_CONFIG_GLOBAL/_SYSTEM/_NOSYSTEM); it
+// supplies no discovery fence, so it is not an example of this form.
+//
+// GIT_DISCOVERY_ACROSS_FILESYSTEM is permit-only, so the direction claim above
+// does not apply to it: Git already stops at a filesystem boundary, unset *is*
+// the stop, and the variable exists only to disable that stop. Retaining it
+// therefore narrows nothing -- an inherited =1 can only widen discovery across
+// a mount. It is kept out of the set anyway, so that an operator or a
+// legitimate cross-mount checkout that sets it keeps working under every bd
+// verb instead of losing the verb outright. That is a deliberate trade with a
+// real cost: base scrubbed both keys in scrubWorktreeRemovalGitEnv's own
+// hardcoded list, so routing that adapter through this shared set reverses
+// base policy for this key and lets `bd worktree remove` discovery cross a
+// mount boundary where base stopped it. Tracked in bd-dz16y; revisit if that
+// widening ever outweighs the cross-mount caller.
 var routingKeys = map[string]struct{}{
 	"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
-	"GIT_CEILING_DIRECTORIES":          {},
 	"GIT_COMMON_DIR":                   {},
 	"GIT_DIR":                          {},
-	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
 	"GIT_EXEC_PATH":                    {},
 	"GIT_GRAFT_FILE":                   {},
 	"GIT_IMPLICIT_WORK_TREE":           {},
@@ -53,6 +87,14 @@ func EntryKey(entry string) string {
 // working directory or alter its repository, index, object, namespace,
 // executable, template, or config authority. Environment names follow host
 // semantics: byte-exact on POSIX and case-insensitive on Windows.
+//
+// The GIT_CONFIG prefix still covers the suppression knobs GIT_CONFIG_NOSYSTEM,
+// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM, which fence config authority rather
+// than redirect it. Retaining them cannot be decided by key alone, because
+// GIT_CONFIG_GLOBAL=/dev/null suppresses config while GIT_CONFIG_GLOBAL=/tmp/evil
+// injects it; that value-aware distinction is made in follow-up #6461. The
+// injection channel this package must close -- the GIT_CONFIG_COUNT/KEY_n/VALUE_n
+// triple -- is covered either way.
 func IsRoutingKeyForOS(key, goos string) bool {
 	keys := routingKeys
 	prefix := "GIT_CONFIG"

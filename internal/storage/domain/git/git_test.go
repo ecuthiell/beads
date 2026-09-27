@@ -77,7 +77,9 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}{
 		{"malformed_config", "beads.role", 128},
 		{"invalid_key", "invalid", 1},
-		{"invalid_routing_boolean", "beads.role", 128},
+		// Reads a non-role key on purpose: role reads now scrub inherited Git
+		// config routing, so beads.role can no longer observe this poison.
+		{"invalid_routing_boolean", "test.marker", 128},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -102,7 +104,22 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			if tc.name != "invalid_key" {
+			switch tc.name {
+			case "invalid_key":
+				// An invalid key name is not a role-plane fault, so there is
+				// no role read to make a claim about.
+			case "invalid_routing_boolean":
+				// beads.role reads scrub inherited Git config routing, so the
+				// poison set above cannot reach them. That immunity is the
+				// point of the hardened role reader, and it is why this case
+				// exercises the error path through a non-role key. Pin the
+				// immunity here rather than the error the scrub prevents:
+				// dropping the scrub turns this NoError back into an exit 128.
+				role, found, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(roleErr)
+				s.False(found)
+				s.Empty(role)
+			default:
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
@@ -455,7 +472,13 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 					t.Setenv(key, changedHome)
 				}
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
-				require.NoError(t, err) // The existing reader maps Git exit errors to absence.
+				// The reader used to map every Git exit error to absence; it now
+				// preserves genuine read failures, so the malformed config in
+				// changedHome surfaces instead of reading as "no role set". What
+				// this case pins is unchanged: the generic constructor resolves
+				// against the *current* caller environment, which is the only
+				// reason it sees changedHome at all.
+				require.Error(t, err)
 				require.False(t, found, "generic role reads still use the current caller environment")
 				require.Empty(t, role)
 				require.Error(t, inherited.SetConfig(t.Context(), "beads.role", "decoy"))

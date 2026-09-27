@@ -122,6 +122,53 @@ func TestSecretGitTrackingIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
+// An operator-set discovery fence must survive the routing scrub. Scrubbing
+// removes redirects that would retarget a command; it must not hand the command
+// authority the operator withheld. Before discovery fences were split out of the
+// routing set this failed: the scrubbed privileged write escaped the ceiling and
+// landed in the containing parent repository's config.
+func TestScrubbedGitCommandsHonorOperatorCeiling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	// Resolve symlinks before fencing: git compares ceiling entries against the
+	// resolved path, so an unresolved /var -> /private/var prefix would never
+	// match and the fence would silently not apply.
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runConfigProbeGit(t, parent, "init", "--quiet")
+	ceiling := filepath.Join(parent, "child")
+	fenced := filepath.Join(ceiling, "sub")
+	if err := os.MkdirAll(fenced, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CEILING_DIRECTORIES", ceiling)
+
+	// Inherit the fenced directory as the process cwd rather than setting
+	// cmd.Dir: the four cmd/bd/config.go role sites pass neither -C nor
+	// cmd.Dir, so an inherited cwd is the shape production actually has.
+	t.Chdir(fenced)
+
+	cmd := exec.Command("git", "config", "beads.role", "maintainer")
+	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("scrubbed git config escaped the operator's ceiling %s: %s", ceiling, output)
+	}
+
+	config, err := os.ReadFile(filepath.Join(parent, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "role") {
+		t.Fatalf("fenced write reached the containing repository %s:\n%s", parent, config)
+	}
+}
+
 // Fixture setup uses the same routing boundary before any per-case poison is set.
 func runConfigProbeGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
