@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -1426,11 +1427,18 @@ func resetHooksPathIfBeadsManaged() error {
 	// ambiguous unset" — a repo with a duplicated beads.role (bad merge, hand
 	// edit) would then report a clean uninstall while leaving the key set,
 	// which is the exact failure this is supposed to stop.
+	//
+	// Both commands also discard inherited Git routing and config suppression,
+	// for the same reason: repoRoot alone does not stop an inherited GIT_DIR
+	// from pointing the --get and the --unset at two different config files,
+	// which would report a clean uninstall while leaving the key set here.
 	getRoleCmd := exec.Command("git", "config", "--get", "beads.role")
 	getRoleCmd.Dir = repoRoot
+	getRoleCmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 	if _, err := getRoleCmd.Output(); err == nil {
 		roleCmd := exec.Command("git", "config", "--unset", "beads.role")
 		roleCmd.Dir = repoRoot
+		roleCmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 		if output, err := roleCmd.CombinedOutput(); err != nil {
 			failures = append(failures, fmt.Sprintf("beads.role: %v (output: %s)", err, strings.TrimSpace(string(output))))
 		}

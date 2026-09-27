@@ -711,6 +711,12 @@ func normalizeWorktreeGitEnvKey(key, goos string) string {
 // repository-selection boundary without changing process identity or signal
 // semantics. Startup config discovery applies the same boundary to its one
 // pre-hook Git probe.
+//
+// The boundary removes inherited discovery *redirects*. It is not a floor:
+// GIT_CEILING_DIRECTORIES is a routing key too, so dropping it also re-enables
+// upward discovery, and a `bd worktree` command run outside a repository can
+// then select a containing parent that an inherited ceiling would have hidden
+// (init's role probe records the same trade-off).
 func clearWorktreeGitRoutingEnv(cmd *cobra.Command) error {
 	if !hasWorktreeCommandAncestor(cmd) {
 		return nil

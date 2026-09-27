@@ -83,6 +83,43 @@ func TestScrubRoutingPreservesConfigSuppression(t *testing.T) {
 	}
 }
 
+// TestScrubRoutingAndSuppressionDropsSuppression is the inverse of the table
+// above: every entry ScrubRouting preserves as suppression must lose its effect
+// on the authority boundary, because a caller who can blind an authority lookup
+// can steer its miss-handler. Non-routing controls still survive both scrubs.
+func TestScrubRoutingAndSuppressionDropsSuppression(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		for _, entry := range []string{
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_NOSYSTEM=false",
+			"GIT_CONFIG_NOSYSTEM=invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_CONFIG_GLOBAL=custom.conf",
+			"GIT_CONFIG_COUNT=1",
+			"GIT_DIR=decoy",
+		} {
+			t.Run(goos+"/"+entry, func(t *testing.T) {
+				input := []string{entry, "GIT_OPTIONAL_LOCKS=1", "KEEP=value"}
+				want := []string{"GIT_OPTIONAL_LOCKS=1", "KEEP=value"}
+				// Lowercase POSIX keys are distinct names, so only the
+				// case-insensitive host drops a folded spelling.
+				if goos == "linux" && strings.HasPrefix(entry, "git_") {
+					want = append([]string{entry}, want...)
+				}
+				got := ScrubRoutingAndSuppressionForOS(input, goos)
+				if !reflect.DeepEqual(got, want) || input[0] != entry {
+					t.Fatalf("filtered environment = %q, want %q; input %q", got, want, input)
+				}
+				// The suppression-preserving scrub must be unaffected.
+				if kept := ScrubRoutingForOS(input, goos); len(kept) < len(got) {
+					t.Fatalf("ScrubRoutingForOS() = %q dropped more than the authority scrub %q", kept, got)
+				}
+			})
+		}
+	}
+}
+
 func TestScrubRoutingGitConfigSuppressionEffects(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("real Git config isolation test requires Git")

@@ -335,7 +335,7 @@ func collectGitConfigEntries() []configEntry {
 
 	// beads.role is the only git config key currently
 	cmd := exec.Command("git", "config", "--get", "beads.role")
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 	output, err := cmd.Output()
 	if err == nil {
 		value := strings.TrimSpace(string(output))

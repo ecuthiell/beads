@@ -412,3 +412,59 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 		})
 	}
 }
+
+// TestInitGitRepositoryRoleIgnoresInheritedConfigSuppression pins the role
+// boundary on the environment the production path actually carries. cmd/bd's
+// proxied init tail always rebinds the use case to NewInitGitRepository
+// (cmd/bd/init_proxied_server.go), so the *captured* environment — not
+// os.Environ() — is the one a beads.role lookup has to be strict about. An
+// inherited GIT_CONFIG_GLOBAL=/dev/null that survives into that capture blinds
+// the read, and the tail answers a missing role by writing "maintainer" into
+// repository-local config, where it outranks the global value from then on. A
+// guard keyed on the environment's provenance would therefore be dead exactly
+// where the escalation happens.
+//
+// Only the global-file vector is observable end to end here, for the reasons
+// internal/routing's counterpart test records: repository config is never
+// suppressed by these variables, and GIT_CONFIG_SYSTEM=<path> is itself
+// scrubbed. The remaining forms are pinned in gitenv's suppression table.
+func TestInitGitRepositoryRoleIgnoresInheritedConfigSuppression(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home, target := t.TempDir(), t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[beads]\n\trole = contributor\n"), 0600))
+	// No local role in the target: the global file is the only place the answer
+	// can come from, so blinding it is visible as a miss.
+	initCmd := exec.Command("git", "init", "--quiet")
+	initCmd.Dir, initCmd.Env = target, gitenv.ScrubRouting(os.Environ())
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "fixture git init: %s", out)
+
+	for _, tc := range []struct{ name, blind string }{
+		// Fixture guard: the global role must be readable at all, otherwise the
+		// blinded case below would pass for the wrong reason.
+		{"unblinded", ""},
+		{"global_null", os.DevNull},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.blind != "" {
+				t.Setenv("GIT_CONFIG_GLOBAL", tc.blind)
+			}
+			// Constructed inside the subtest: the constructor captures the
+			// environment, so the suppression entry has to be present first.
+			useCase := domain.NewGitUseCase(target, NewInitGitRepository(target))
+			role, found, err := useCase.BeadsRole(t.Context())
+			require.NoError(t, err)
+			require.True(t, found, "a blinded role read makes the init tail persist a maintainer default")
+			require.Equal(t, "contributor", role)
+		})
+	}
+}

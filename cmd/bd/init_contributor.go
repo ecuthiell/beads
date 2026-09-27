@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/gitenv"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -342,7 +343,11 @@ func autoConfigureForkContributor(ctx context.Context, store storage.DoltStorage
 		return fmt.Errorf("failed to set sync.remote: %w", err)
 	}
 
-	_ = exec.Command("git", "config", "beads.role", "contributor").Run()
+	// Same role-authority boundary as every other beads.role reader and writer:
+	// an inherited GIT_DIR would land this write in a different repository.
+	roleCmd := exec.Command("git", "config", "beads.role", "contributor")
+	roleCmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
+	_ = roleCmd.Run()
 
 	if configPath, err := config.FindConfigYAMLPath(); err == nil {
 		if addErr := config.AddRepo(configPath, planningPath); addErr != nil && !strings.Contains(addErr.Error(), "already exists") {

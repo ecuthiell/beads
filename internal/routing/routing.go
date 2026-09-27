@@ -12,9 +12,12 @@ import (
 	"github.com/steveyegge/beads/internal/gitenv"
 )
 
+// Role detection is an authority lookup, so it also discards inherited config
+// suppression: detectFromURL below answers a missed read with Maintainer, which
+// would let a caller escalate by blinding the lookup rather than forging it.
 var gitCommandRunner = func(repoPath string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 	if repoPath != "" {
 		cmd.Dir = repoPath
 	}

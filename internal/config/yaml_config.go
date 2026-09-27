@@ -181,10 +181,25 @@ func IsSecretKey(key string) bool {
 
 // isGitTracked returns true if the file at path is tracked by git
 // (i.e., has been git-added). Uses `git ls-files --error-unmatch`.
+//
+// The only caller, checkSecretGitTracked, is fail-open: a probe that cannot
+// answer reads as "not tracked" reads as "allow the write". So the probe runs
+// twice and either "tracked" answer wins. The scrubbed pass stops a poisoned
+// GIT_DIR from hiding a tracked file behind an unrelated repository; the
+// inherited pass keeps a legitimately routed checkout — a bare repo.git with
+// GIT_DIR/GIT_WORK_TREE exported and no in-tree .git to discover from —
+// answerable at all, which scrubbing alone takes away.
 func isGitTracked(path string) bool {
+	if gitTracksFile(path, gitenv.ScrubRouting(os.Environ())) {
+		return true
+	}
+	return gitTracksFile(path, nil) // nil inherits the caller's environment
+}
+
+func gitTracksFile(path string, env []string) bool {
 	cmd := exec.Command("git", "ls-files", "--error-unmatch", path)
 	cmd.Dir = filepath.Dir(path)
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
+	cmd.Env = env
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil

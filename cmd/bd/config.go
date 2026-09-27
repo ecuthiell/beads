@@ -199,9 +199,11 @@ var configSetCmd = &cobra.Command{
 			if !validRoles[value] {
 				return HandleError("invalid role %q (valid values: maintainer, contributor)", value)
 			}
-			// Role commands discard custom Git config routing but retain explicit config suppression.
+			// Role commands discard inherited Git config routing, including the
+			// suppression ScrubRouting keeps: beads.role is an authority value, and
+			// the reader it feeds treats a missing value as maintainer.
 			cmd := exec.Command("git", "config", "beads.role", value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRouting(os.Environ())
+			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 			if err := cmd.Run(); err != nil {
 				return HandleError("setting beads.role in git config: %v", err)
 			}
@@ -347,7 +349,7 @@ var configGetCmd = &cobra.Command{
 
 		if key == "beads.role" {
 			cmd := exec.Command("git", "config", "--get", "beads.role")
-			cmd.Env = gitenv.ScrubRouting(os.Environ())
+			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 			output, err := cmd.Output()
 			value := strings.TrimSpace(string(output))
 			if err != nil {
@@ -600,8 +602,11 @@ var configUnsetCmd = &cobra.Command{
 		}
 
 		if key == "beads.role" {
+			// Same role-authority boundary as `bd config set`/`get` above: every
+			// spelling of a beads.role mutation resolves the repository the same
+			// way, so the next reader has one boundary to reason about.
 			gitCmd := exec.Command("git", "config", "--unset", "beads.role")
-			gitCmd.Env = gitenv.ScrubRouting(os.Environ())
+			gitCmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 			if err := gitCmd.Run(); err != nil {
 				return HandleError("unsetting beads.role in git config: %v", err)
 			}
@@ -893,8 +898,10 @@ Examples:
 		}
 
 		for _, p := range gitPairs {
+			// set-many is the batch alias for `bd config set`, so it runs on the
+			// same role-authority boundary that verb does.
 			cmd := exec.Command("git", "config", "beads.role", p.value) //nolint:gosec // value is validated against allowlist above
-			cmd.Env = gitenv.ScrubRouting(os.Environ())
+			cmd.Env = gitenv.ScrubRoutingAndSuppression(os.Environ())
 			if err := cmd.Run(); err != nil {
 				return HandleError("setting %s in git config: %v", p.key, err)
 			}

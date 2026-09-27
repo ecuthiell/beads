@@ -579,7 +579,7 @@ func (rc *RepoContext) Role() (UserRole, bool) {
 		return Contributor, true
 	}
 
-	cmd := rc.gitCmdWithEnv(context.Background(), gitenv.ScrubRouting(os.Environ()), "config", "--get", "beads.role")
+	cmd := rc.gitCmdWithEnv(context.Background(), gitenv.ScrubRoutingAndSuppression(os.Environ()), "config", "--get", "beads.role")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", false // Not configured

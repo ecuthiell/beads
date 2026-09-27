@@ -78,21 +78,58 @@ func ScrubRouting(env []string) []string {
 // semantics. It preserves non-routing controls such as GIT_OPTIONAL_LOCKS and
 // GIT_NO_REPLACE_OBJECTS, plus explicit system/global config suppression.
 // Custom config paths and inline values still lose their routing authority.
+//
+// Suppression cannot redirect a read, but it can blind one. Callers whose
+// result carries authority must use ScrubRoutingAndSuppression instead.
 func ScrubRoutingForOS(env []string, goos string) []string {
+	return scrubRoutingForOS(env, goos, true)
+}
+
+// ScrubRoutingAndSuppression removes Git routing entries using the current
+// host's environment-key semantics, including the explicit config suppression
+// that ScrubRouting deliberately preserves.
+func ScrubRoutingAndSuppression(env []string) []string {
+	return ScrubRoutingAndSuppressionForOS(env, runtime.GOOS)
+}
+
+// ScrubRoutingAndSuppressionForOS is ScrubRoutingForOS without the config
+// suppression exemption: GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_SYSTEM=/dev/null
+// and GIT_CONFIG_NOSYSTEM lose their effect along with every other routing key.
+//
+// Use it wherever a *missing* config value grants privilege rather than merely
+// losing a preference. Suppression is harmless for a command that only reports
+// what Git sees, but on an authority lookup such as beads.role an inherited
+// GIT_CONFIG_NOSYSTEM=1 lets a caller blind the read, and a permissive
+// miss-handler (routing.detectFromURL defaults to maintainer) converts that
+// blinding into an escalation. Keeping reads and writes of the same key on this
+// boundary also stops them from disagreeing about which config file they mean.
+func ScrubRoutingAndSuppressionForOS(env []string, goos string) []string {
+	return scrubRoutingForOS(env, goos, false)
+}
+
+func scrubRoutingForOS(env []string, goos string, keepSuppression bool) []string {
 	cleaned := make([]string, 0, len(env))
 	for _, entry := range env {
-		if IsRoutingKeyForOS(EntryKey(entry), goos) && !isConfigSuppression(entry, goos) {
-			continue
+		if IsRoutingKeyForOS(EntryKey(entry), goos) {
+			if !keepSuppression || !isConfigSuppressionControl(entry, goos) {
+				continue
+			}
 		}
 		cleaned = append(cleaned, entry)
 	}
 	return cleaned
 }
 
-// isConfigSuppression recognizes controls that disable config sources.
-// IsRoutingKeyForOS stays conservative: a key alone cannot distinguish null
-// suppression from a custom file that can redirect selected operations.
-func isConfigSuppression(entry, goos string) bool {
+// isConfigSuppressionControl recognizes the config controls that cannot
+// redirect Git at a file of the caller's choosing. IsRoutingKeyForOS stays
+// conservative: a key alone cannot distinguish null suppression from a custom
+// file that can redirect selected operations.
+//
+// GIT_CONFIG_NOSYSTEM is preserved value-blind — unlike the null-path forms
+// below there is no value it can take that names a file, so Git is left to
+// interpret its Boolean, including the "false"/"0" spellings that re-enable
+// system config and any invalid value it should report itself.
+func isConfigSuppressionControl(entry, goos string) bool {
 	key := execenv.KeyIdentityForOS(EntryKey(entry), goos)
 	_, value, assigned := strings.Cut(entry, "=")
 	if !assigned {
@@ -100,7 +137,7 @@ func isConfigSuppression(entry, goos string) bool {
 	}
 	switch key {
 	case execenv.KeyIdentityForOS("GIT_CONFIG_NOSYSTEM", goos):
-		return true // Let Git interpret its Boolean value, including invalid values.
+		return true
 	case execenv.KeyIdentityForOS("GIT_CONFIG_GLOBAL", goos), execenv.KeyIdentityForOS("GIT_CONFIG_SYSTEM", goos):
 		return value == "/dev/null" || (goos == "windows" && strings.EqualFold(value, "NUL"))
 	}
@@ -114,7 +151,7 @@ func ClearRouting() (bool, error) {
 	removed := false
 	for _, entry := range os.Environ() {
 		key := EntryKey(entry)
-		if !IsRoutingKeyForOS(key, runtime.GOOS) || isConfigSuppression(entry, runtime.GOOS) {
+		if !IsRoutingKeyForOS(key, runtime.GOOS) || isConfigSuppressionControl(entry, runtime.GOOS) {
 			continue
 		}
 		if err := os.Unsetenv(key); err != nil {
