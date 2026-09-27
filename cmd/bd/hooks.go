@@ -68,8 +68,14 @@ const hookTimeoutSeconds = 300
 //   - Helper argv is separated with -- so user input cannot become an option.
 //   - If no compatible helper exists, the direct fallback is explicitly
 //     unbounded rather than silently pretending to enforce a deadline.
-//   - Only GNU coreutils timeout implementations are selected; Windows
+//   - Only GNU coreutils timeout and uutils coreutils timeout (same command
+//     line, same exit 124; GH#5541) are selected, by --version banner; Windows
 //     timeout.exe has the same name but an incompatible command line (GH#5503).
+//     The banner match holds under the gtimeout candidate too: GNU prints a
+//     fixed program name (Homebrew's gtimeout reports "timeout (GNU
+//     coreutils) ..."), and the uutils multicall dispatches on the argv[0]
+//     suffix and then prints the canonical name ("timeout (uutils coreutils)
+//     ..." when invoked as gtimeout). checks.nix runs that case.
 //   - If the beads database is not initialized (exit code 3), the hook exits
 //     successfully with a warning so that git operations are not blocked.
 func generateHookSection(hookName string) string {
@@ -93,7 +99,7 @@ func generateHookSection(hookName string) string {
 		"    if command -v \"$_bd_timeout_candidate\" >/dev/null 2>&1; then\n" +
 		"      if _bd_timeout_version=\"$(\"$_bd_timeout_candidate\" --version 2>/dev/null)\"; then\n" +
 		"        case \"$_bd_timeout_version\" in\n" +
-		"          \"timeout (GNU coreutils) \"*) _bd_timeout_command=$_bd_timeout_candidate; break ;;\n" +
+		"          \"timeout (GNU coreutils) \"*|\"timeout (uutils coreutils) \"*) _bd_timeout_command=$_bd_timeout_candidate; break ;;\n" +
 		"        esac\n" +
 		"      fi\n" +
 		"    fi\n" +
@@ -873,15 +879,21 @@ func isGitTrackedFileWithEnv(path string, clean, inherited []string) bool {
 	base := filepath.Base(path)
 	// Check the containing repository first so inherited routing cannot hide a
 	// tracked hook. The fallback preserves bare work trees and trusted config.
-	// Either index reporting a tracked path is sufficient to refuse the write,
-	// even if the other view does not track it.
+	// Exit 1 is git's "repository reached, path is not tracked" answer and is
+	// final, so the second probe runs only when the first environment failed
+	// for a configuration reason (no reachable repository) rather than spawning
+	// a second `git ls-files` on every ordinary miss.
 	for _, env := range [][]string{clean, inherited} {
 		// #nosec G204 G702 - fixed "git" command; dir/base come from the hooks
 		// directory bd itself resolved, not user input
 		cmd := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", "--", base)
 		cmd.Env = env
-		if cmd.Run() == nil {
+		err := cmd.Run()
+		if err == nil {
 			return true
+		}
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+			return false
 		}
 	}
 	return false
@@ -1548,8 +1560,11 @@ func resetHooksPathIfBeadsManaged() error {
 		return nil // not in a git repo
 	}
 
-	// These checks are defensive: repoRoot and commonDir share the cached Git context.
-	// The common-dir pin states intent: --local addresses the common config through either gitdir.
+	// These checks are defensive. repoRoot and commonDir are resolved
+	// independently, and an inherited GIT_DIR can make them name different
+	// repositories, so their agreement is intent rather than an invariant.
+	// The common-dir pin states that intent: --git-dir addresses the common
+	// config through either gitdir, while repoRoot is only the subprocess cwd.
 	commonDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return fmt.Errorf("resolve Git common directory for role reset: %w", err)

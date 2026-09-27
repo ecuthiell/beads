@@ -122,47 +122,54 @@ func TestSecretGitTrackingIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
-// TestSecretGitTrackingSurvivesExternalWorkTreeRouting pins the inherited-view
-// fallback in isGitTracked, which the scrubbed probe alone cannot replace.
-//
-// checkSecretGitTracked is fail-open by design: a probe that cannot answer
-// reports "untracked" and the secret write proceeds. So in a layout where the
-// file is reachable only through inherited GIT_DIR + GIT_WORK_TREE routing — a
-// bare repository with an external work tree — a scrubbed-only probe exits 128
-// and the guard fails toward exposure, writing the secret into a git-tracked
-// config.yaml. The untracked assertions are what keep the fallback from
-// over-refusing: the inherited view must still answer "no" for a file the
-// index does not hold.
-func TestSecretGitTrackingSurvivesExternalWorkTreeRouting(t *testing.T) {
-	root := t.TempDir()
-	gitDir, workTree := filepath.Join(root, "repo.git"), filepath.Join(root, "worktree")
-	runConfigProbeGit(t, root, "init", "--quiet", "--bare", gitDir)
-	beadsDir := filepath.Join(workTree, ".beads")
-	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	tracked, untracked := filepath.Join(beadsDir, "config.yaml"), filepath.Join(beadsDir, "untracked.yaml")
+// A bare repository whose work tree is named only by GIT_DIR/GIT_WORK_TREE is
+// invisible to the scrubbed probe — it is reachable through the inherited
+// routing alone. The secret guard must still refuse a write into the tracked
+// config.yaml there, which is the refusal upstream-base performed before the
+// probe began scrubbing routing.
+func TestSecretGitTrackingHonorsInheritedBareWorkTree(t *testing.T) {
+	gitDir, workTree := t.TempDir(), t.TempDir()
+	runConfigProbeGit(t, workTree, "init", "--bare", "--quiet", gitDir)
+	tracked := filepath.Join(workTree, "config.yaml")
+	untracked := filepath.Join(workTree, "untracked.yaml")
 	for _, path := range []string{tracked, untracked} {
 		if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// --git-dir/--work-tree are CLI arguments, so the fixture stages the file
-	// through the external work tree without depending on the probe's own env.
-	runConfigProbeGit(t, beadsDir, "--git-dir", gitDir, "--work-tree", workTree, "add", "--", tracked)
-
-	// The work tree holds no .git of its own, so upward discovery from the
-	// containing directory finds no repository once routing is scrubbed.
+	runConfigProbeGit(t, workTree, "--git-dir", gitDir, "--work-tree", workTree, "add", "--", tracked)
 	t.Setenv("GIT_DIR", gitDir)
 	t.Setenv("GIT_WORK_TREE", workTree)
+
+	// Fixture guard: the tracked file must be reachable only through the
+	// inherited routing, and the scrubbed probe must fail for a configuration
+	// reason (no reachable repository) rather than "path is not tracked"
+	// (exit 1), which is final and would leave the fallback unreachable.
+	probe := func(env []string) error {
+		cmd := exec.Command("git", "ls-files", "--error-unmatch", tracked)
+		cmd.Dir = workTree
+		cmd.Env = env
+		return cmd.Run()
+	}
+	inherited := os.Environ()
+	scrubbedErr := probe(gitenv.ScrubRouting(inherited))
+	if scrubbedErr == nil {
+		t.Fatal("fixture must require inherited routing, scrubbed probe found the file")
+	}
+	if exit, ok := scrubbedErr.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		t.Fatalf("fixture must fail the scrubbed probe for a configuration reason, got exit 1")
+	}
+	if err := probe(inherited); err != nil {
+		t.Fatalf("inherited tracking precondition: %v", err)
+	}
+
 	if !isGitTracked(tracked) {
-		t.Error("scrubbed-only probe lost the tracked file that inherited routing reaches")
+		t.Error("bare work tree tracking was ignored, secret writes are no longer refused")
 	}
 	if isGitTracked(untracked) {
 		t.Error("untracked file reported as tracked")
 	}
-	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil ||
-		!strings.Contains(err.Error(), "refusing to write secret key") {
+	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
 		t.Errorf("tracked secret refusal = %v", err)
 	}
 	if err := checkSecretGitTracked(untracked, "linear.api_key"); err != nil {
