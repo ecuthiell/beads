@@ -1137,13 +1137,14 @@ func runMigrateFromProxiedServer(dryRun bool, shared bool) error {
 		}
 	}
 
-	proxyLock, err := util.TryLock(filepath.Join(rootDir, proxy.LockFileName))
+	// Retirement removes these control files while their lifecycle leases remain held.
+	proxyLock, err := util.TryLockForRemoval(filepath.Join(rootDir, proxy.LockFileName))
 	if err != nil {
 		return migrateLockErr("proxy", err)
 	}
 	defer proxyLock.Unlock()
 
-	childLock, err := util.TryLock(filepath.Join(rootDir, server.LockFileName))
+	childLock, err := util.TryLockForRemoval(filepath.Join(rootDir, server.LockFileName))
 	if err != nil {
 		return migrateLockErr("proxied dolt sql-server", err)
 	}
