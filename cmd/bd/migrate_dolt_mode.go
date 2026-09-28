@@ -1190,7 +1190,7 @@ func runMigrateFromProxiedServer(dryRun bool, shared bool) error {
 		if err := os.Remove(configfile.ProxiedServerClientInfoPath(beadsDir)); err != nil && !os.IsNotExist(err) {
 			return HandleError("failed to remove %s: %v", configfile.ProxiedServerClientInfoFileName, err)
 		}
-		if errs := proxy.PurgeControlFiles(rootDir); len(errs) > 0 {
+		if errs := proxy.PurgeControlFiles(rootDir, proxyLock, childLock); len(errs) > 0 {
 			return HandleError("failed to retire proxy controls: %v", errs[0])
 		}
 		if errs := removeMigrateAssets(logAssets); len(errs) > 0 {
