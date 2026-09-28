@@ -730,8 +730,10 @@ func worktreeGitEnvKey(entry string) string {
 //     numbered key/value pairs — is dropped for the command's lifetime rather
 //     than for one child probe.
 //
-// Startup config discovery applies the same boundary to its one pre-hook Git
-// probe.
+// Startup config discovery applies the same scrub to its pre-hook config-path
+// probe only; the .beads database discovery probes in internal/beads still
+// honor inherited routing, so the two planes can resolve different
+// repositories.
 func clearWorktreeGitRoutingEnv(cmd *cobra.Command) error {
 	if !hasWorktreeCommandAncestor(cmd) {
 		return nil

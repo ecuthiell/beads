@@ -77,6 +77,9 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 	}{
 		{"malformed_config", "beads.role", 128},
 		{"invalid_key", "invalid", 1},
+		// beads.role reads now scrub GIT_CONFIG* routing, so a routing poison can
+		// only reach a key that is not role-scoped.
+		{"invalid_routing_boolean", "test.marker", 128},
 	} {
 		s.Run(tc.name, func() {
 			switch tc.name {
@@ -88,6 +91,8 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 						t.Errorf("restore repository config: %v", err)
 					}
 				})
+			case "invalid_routing_boolean":
+				s.T().Setenv("GIT_CONFIG_NOSYSTEM", "not-a-boolean")
 			}
 			value, found, err := s.repo.GetConfig(s.Ctx(), tc.key)
 			s.Require().Error(err)
@@ -99,22 +104,34 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 			diagnostic := strings.TrimSpace(string(exitErr.Stderr))
 			s.Require().NotEmpty(diagnostic)
 			s.Contains(err.Error(), diagnostic)
-			if tc.name != "invalid_key" {
+			if tc.name == "malformed_config" {
 				_, _, roleErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
 				s.Require().Error(roleErr)
 				s.ErrorAs(roleErr, &exitErr)
+			}
+			if tc.name == "invalid_routing_boolean" {
+				// The same poison that fails the read above cannot reach beads.role,
+				// which resolves as absent rather than as a preserved read failure.
+				role, roleFound, roleErr := s.repo.GetConfig(s.Ctx(), "beads.role")
+				s.Require().NoError(roleErr)
+				s.False(roleFound)
+				s.Empty(role)
+				_, _, useCaseErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
+				s.Require().NoError(useCaseErr)
 			}
 		})
 	}
 }
 
-// TestConfig_ReadFailuresAreNotMissing used to carry an "invalid_routing_boolean"
-// row that poisoned GIT_CONFIG_NOSYSTEM and expected the beads.role read to fail.
-// beads.role reads now scrub inherited Git routing, so that poison never reaches
-// git for this key and the read succeeds. The row is replaced by the pair below,
-// which pins both halves of the new contract. The general "a read failure is an
-// error, not an absent key" guard is unaffected: malformed_config still proves it
-// for the same key through the repository's own config file.
+// TestConfig_ReadFailuresAreNotMissing's "invalid_routing_boolean" row used to
+// poison GIT_CONFIG_NOSYSTEM and expect the beads.role read to fail. beads.role
+// reads now scrub inherited Git routing, so that poison never reaches git for
+// this key; the row is retargeted to test.marker, which sits outside the scrub
+// and still fails, and it asserts there that the same poison leaves beads.role
+// absent rather than failing. The pair below pins both halves of the new
+// contract directly for beads.role. The general "a read failure is an error, not
+// an absent key" guard is unaffected: malformed_config still proves it for the
+// same key through the repository's own config file.
 func (s *testSuite) TestConfig_BeadsRoleScrubsInheritedRoutingEnv() {
 	s.gitInit()
 	s.Require().NoError(s.repo.SetConfig(s.Ctx(), "beads.role", "maintainer"))

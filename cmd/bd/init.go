@@ -1016,7 +1016,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// reinit has passed its held-gate confirmation. Remote safety above
 		// still evaluates the flag before this point.
 		if stealth {
-			if err := setupStealthMode(!quiet); err != nil {
+			if err := setupStealthModeAt(cwd, !quiet); err != nil {
 				return fmt.Errorf("setting up stealth mode: %v", err)
 			}
 
@@ -1121,8 +1121,8 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		// safe to call even if already in a git repo.
 		// Skip when BEADS_DIR is explicitly set — the caller may be creating a
 		// standalone .beads/ directory outside any git repo.
-		if !isGitRepo() && !hasExplicitBeadsDir {
-			gitInitCmd := exec.Command("git", "init")
+		if !hasExplicitBeadsDir && initArtifactGitCommand(cwd, "rev-parse", "--git-dir").Run() != nil {
+			gitInitCmd := initArtifactGitCommand(cwd, "init")
 			if output, err := gitInitCmd.CombinedOutput(); err != nil {
 				return fmt.Errorf("failed to initialize git repository: %v\n%s", err, output)
 			}
@@ -1996,15 +1996,15 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 		setupExclude, _ := cmd.Flags().GetBool("setup-exclude")
 		if setupExclude {
 			// Manual flag - always configure
-			if err := setupForkExclude(!quiet); err != nil {
+			if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 			}
-		} else if !stealth && isGitRepo() {
+		} else if !stealth && isInitRoleGitRepo(ctx) {
 			// Auto-detect fork and prompt (skip if stealth - it handles exclude already)
 			if isFork, upstreamURL := detectForkSetup(); isFork {
 				if nonInteractive {
 					// In non-interactive mode, auto-configure fork exclude
-					if err := setupForkExclude(!quiet); err != nil {
+					if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 					}
 				} else {
@@ -2016,7 +2016,7 @@ Non-interactive mode (--non-interactive or BD_NON_INTERACTIVE=1):
 						}
 					}
 					if shouldExclude {
-						if err := setupForkExclude(!quiet); err != nil {
+						if err := setupForkExcludeAt(cwd, !quiet); err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
 						}
 					}

@@ -764,7 +764,9 @@ func CheckProjectGitignore(repoPath string) DoctorCheck {
 
 // EnsureProjectGitignore adds .dolt/, *.db, and .beads-credential-key patterns
 // to the project-root .gitignore if they are not already present. Creates the
-// file if it doesn't exist. This prevents users from accidentally committing
+// file if it doesn't exist. Empty or missing files start with the header;
+// nonempty files retain their bytes and receive a blank separator before it.
+// This prevents users from accidentally committing
 // Dolt database files or the credential encryption key.
 // repoPath is the project root directory.
 func EnsureProjectGitignore(repoPath string) error {
@@ -790,11 +792,13 @@ func EnsureProjectGitignore(repoPath string) error {
 
 	// A fresh .gitignore must not start with a blank line; the separator only
 	// belongs between existing content and the appended block.
-	lines := []string{ProjectGitignoreHeader}
+	lines := make([]string, 0, len(toAdd)+2)
 	if len(content) > 0 {
-		lines = []string{"", ProjectGitignoreHeader}
+		lines = append(lines, "")
 	}
-	newContent := gitignore.AppendLines(content, append(lines, toAdd...))
+	lines = append(lines, ProjectGitignoreHeader)
+	lines = append(lines, toAdd...)
+	newContent := gitignore.AppendLines(content, lines)
 
 	// #nosec G306 -- gitignore needs to be readable by git and collaborators
 	if err := os.WriteFile(gitignorePath, newContent, 0644); err != nil {
