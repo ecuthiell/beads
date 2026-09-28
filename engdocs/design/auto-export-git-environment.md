@@ -10,7 +10,9 @@ commands that intentionally select a repository by directory. Share environment
 key identity and parsing through the work in
 [#6321](https://github.com/gastownhall/beads/pull/6321), preserving its Windows
 and POSIX semantics. Do not replace `scrubGitHookEnv` mechanically with the
-broader `gitenv.ScrubRouting` introduced by the pending routing stack.
+broader `gitenv.ScrubRouting` now on main. #6321 merged at
+`13150ba36066a0e7d6fa45f57933c85fea13acb2` from adopted head
+`1409ed6e8edf346c2ff4d2efdc91ef168602de5c`; its key-handling behavior is retained.
 
 Before broadening the filter, resolve the temporary-index contract owned by
 [#4080](https://github.com/gastownhall/beads/issues/4080). A hook invoked during
@@ -24,7 +26,7 @@ to redirect the eventual write.
 
 ## Inventory and compatibility boundary
 
-The following is a source inventory at main
+The following is the original source inventory at main
 `511849496b33b607d60489962382d0bc781a50b4`, compared with the shared helper in
 [#6454](https://github.com/gastownhall/beads/pull/6454). It is not evidence that
 every additional key currently causes an auto-export failure.
@@ -34,6 +36,15 @@ every additional key currently causes an auto-export failure.
 | Both filters | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_PREFIX`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_CEILING_DIRECTORIES`, `GIT_DISCOVERY_ACROSS_FILESYSTEM`, and the `GIT_CONFIG*` family |
 | Shared routing helper only | `GIT_EXEC_PATH`, `GIT_GRAFT_FILE`, `GIT_IMPLICIT_WORK_TREE`, `GIT_INTERNAL_SUPER_PREFIX`, `GIT_NAMESPACE`, `GIT_QUARANTINE_PATH`, `GIT_REPLACE_REF_BASE`, `GIT_SHALLOW_FILE`, `GIT_SUPER_PREFIX`, `GIT_TEMPLATE_DIR` |
 
+At the #6321 merge, the nine-versus-nineteen exact-key split remains, but
+`ScrubRouting` preserves assigned `GIT_CONFIG_NOSYSTEM` values verbatim
+(including `false`, `0`, and invalid Booleans), and `GIT_CONFIG_GLOBAL` or
+`GIT_CONFIG_SYSTEM` set to `/dev/null` (also case-insensitive `NUL` on Windows).
+The hook filter removes all `GIT_CONFIG*` entries instead.
+`ScrubRoutingAndSuppression` removes those exemptions but still differs in
+exact-key membership and bare-entry handling. These are compatibility
+differences, not an agreed instruction to broaden hook staging.
+
 #6321 also preserves a valueless exact-key entry while removing matching
 `GIT_CONFIG*` entries; the broader helper removes recognized exact keys without
 requiring `=`. Consolidation must retain the chosen malformed-entry contract,
@@ -42,7 +53,7 @@ controls. Reusing a helper name must not silently choose different semantics.
 
 ## Implementation and acceptance sequence
 
-1. Adopt and retain #6321's host-key matching and behavioral fixtures.
+1. Retain merged #6321's host-key matching and behavioral fixtures.
 2. Agree with #4080's owner on same-hook temporary-index selection, relative
    paths, and index-lock ownership. Keep that implementation independently
    reviewable; this proposal neither implements nor closes #4080.
