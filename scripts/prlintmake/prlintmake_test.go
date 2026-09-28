@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
 func TestFmtCheckClean(t *testing.T) {
@@ -258,7 +260,9 @@ func sourceRepoRoot() string {
 	if !ok {
 		panic("runtime.Caller failed")
 	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	// Under Bazel the caller path is workspace-relative; CallerDir rebuilds it
+	// under the runfiles root, which holds the declared fmt-check.sh.
+	return filepath.Dir(filepath.Dir(bazeltest.CallerDir(file, "scripts/prlintmake")))
 }
 
 func shellVisiblePath(path string) string {

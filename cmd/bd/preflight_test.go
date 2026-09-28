@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
 func TestCheckResult_Passed(t *testing.T) {
@@ -351,7 +354,21 @@ func main() {
 	}
 }
 
+// usePreflightGofmt preserves the SDK executable declared by the Bazel target
+// while exercising the production PATH lookup in runFmtCheckAt.
+func usePreflightGofmt(t *testing.T) {
+	t.Helper()
+	if !bazeltest.IsBazel() {
+		return
+	}
+	path, err := bazeltest.RunfileEnv("BEADS_TEST_GOFMT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(path)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
 func TestRunFmtCheckAtFormattedRoot(t *testing.T) {
+	usePreflightGofmt(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -364,6 +381,7 @@ func TestRunFmtCheckAtFormattedRoot(t *testing.T) {
 }
 
 func TestRunFmtCheckAtFindsUnformattedFileOutsideCallerSubtree(t *testing.T) {
+	usePreflightGofmt(t)
 	root := t.TempDir()
 	callerDir := filepath.Join(root, "nested", "caller")
 	outsideCaller := filepath.Join(root, "sibling", "bad.go")
@@ -538,4 +556,102 @@ func TestIsBeadsRepo(t *testing.T) {
 	if isBeadsRepo(empty) {
 		t.Error("dir without go.mod should not be detected as the beads repo")
 	}
+}
+
+// TestPreflightJSONFlagBindsGlobal pins both halves of preflight's --json
+// binding, which is one flag serving two masters. Setting it must write the
+// package global, or every jsonOutput reader (including the front-door refusal
+// renderers) stays in text mode while the user asked for JSON. Leaving it
+// unset must report unchanged to commandJSONFlagChanged, which is what lets a
+// config-file `json: true` reach preflight the way it reaches its siblings —
+// a deliberate behavior change from the unbound shadow this replaced, and the
+// reason the CHANGELOG calls it out.
+//
+// The last two subtests drive that config half rather than only asserting the
+// negative direction. flag.Value.Set never sets Changed (only FlagSet.Set
+// does), so the Changed==true branch of commandJSONFlagChanged needs its own
+// case, and the behavior the CHANGELOG announces — configured `json: true`
+// with no flag flipping jsonOutput — only happens inside
+// refreshBoundCommandConfig, so it has to be driven through that function.
+func TestPreflightJSONFlagBindsGlobal(t *testing.T) {
+	flag := preflightCmd.Flags().Lookup("json")
+	if flag == nil {
+		t.Fatal("preflight has no --json flag")
+	}
+	rootJSON := preflightCmd.Root().PersistentFlags().Lookup("json")
+	if rootJSON == nil {
+		t.Fatal("root has no persistent --json flag")
+	}
+	// refreshBoundCommandConfig consults config only when neither --json nor
+	// its hidden --format alias was given, so this test owns that flag's
+	// Changed bit too.
+	rootFormat := preflightCmd.Root().PersistentFlags().Lookup("format")
+	if rootFormat == nil {
+		t.Fatal("root has no persistent --format flag")
+	}
+
+	oldGlobal := jsonOutput
+	oldValue, oldChanged := flag.Value.String(), flag.Changed
+	oldRootChanged := rootJSON.Changed
+	oldFormatChanged := rootFormat.Changed
+	// refreshBoundCommandConfig reapplies every config-backed default, not
+	// just json; restore the rest so this test cannot leak into siblings.
+	oldReadonly, oldActor, oldAutoCommit := readonlyMode, actor, doltAutoCommit
+	t.Cleanup(func() {
+		_ = flag.Value.Set(oldValue)
+		flag.Changed = oldChanged
+		rootJSON.Changed = oldRootChanged
+		rootFormat.Changed = oldFormatChanged
+		jsonOutput = oldGlobal
+		readonlyMode, actor, doltAutoCommit = oldReadonly, oldActor, oldAutoCommit
+		config.ResetForTesting()
+	})
+
+	t.Run("flag writes the package global", func(t *testing.T) {
+		jsonOutput = false
+		if err := flag.Value.Set("true"); err != nil {
+			t.Fatal(err)
+		}
+		if !jsonOutput {
+			t.Fatal("preflight --json did not write jsonOutput; an unbound shadow leaves every reader of the global in text mode")
+		}
+	})
+
+	t.Run("neither flag set reports unchanged", func(t *testing.T) {
+		flag.Changed = false
+		rootJSON.Changed = false
+		if commandJSONFlagChanged(preflightCmd) {
+			t.Fatal("preflight reported an explicit --json with neither flag set; the config-file json default would never apply")
+		}
+	})
+
+	t.Run("explicit --json reports changed", func(t *testing.T) {
+		flag.Changed = false
+		rootJSON.Changed = false
+		if err := preflightCmd.Flags().Set("json", "true"); err != nil {
+			t.Fatal(err)
+		}
+		if !commandJSONFlagChanged(preflightCmd) {
+			t.Fatal("an explicitly set --json reported unchanged; the config default would override the flag the user typed")
+		}
+	})
+
+	t.Run("configured json default applies with no flag", func(t *testing.T) {
+		config.ResetForTesting()
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("config.Initialize: %v", err)
+		}
+		config.Set("json", true)
+
+		flag.Changed = false
+		rootJSON.Changed = false
+		rootFormat.Changed = false
+		jsonOutput = false
+
+		refreshBoundCommandConfig(preflightCmd)
+
+		if !jsonOutput {
+			t.Fatal("config json:true with no --json flag left jsonOutput false; preflight would render text while the repo config asks for JSON")
+		}
+	})
 }
