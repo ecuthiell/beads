@@ -393,9 +393,7 @@ func TestInitEmbeddedHooksSelectedTail(t *testing.T) {
 				preserveInitRoleInputs(t, filepath.Join(common, "config"))
 			}
 			run := func() { runEmbeddedInitHooks(t.Context(), selected, storage, name == "skip", quiet) }
-			if name == "bare" {
-				require.Contains(t, captureStderr(t, run), "Failed to resolve git hooks")
-			} else if locked {
+			if locked {
 				stderr := captureStderr(t, run)
 				require.Equal(t, !quiet, strings.Contains(stderr, "Failed to install git hooks"))
 				require.Equal(t, !quiet, strings.Contains(stderr, "bd hooks install --beads"))
@@ -407,14 +405,22 @@ func TestInitEmbeddedHooksSelectedTail(t *testing.T) {
 			if name == "colocated" {
 				destination = filepath.Join(common, "hooks")
 			}
-			if name == "skip" || name == "nonrepo" || strings.Contains(name, "pure_jj") || name == "bare" {
+			if name == "skip" || name == "nonrepo" || strings.Contains(name, "pure_jj") {
 				_, err := os.Stat(destination)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				return
 			}
 			require.Contains(t, string(readInitHooksFile(t, filepath.Join(destination, "pre-commit"))), hookSectionBeginPrefix)
 			if !locked && name != "colocated" {
-				got := initExcludeGit(t, selected, "config", "--file", filepath.Join(common, "config"), "--get", "core.hooksPath")
+				// A bare repository has no work tree to anchor, so it resolves
+				// through the work-tree-less hooks context (GH#6457) and is its own
+				// common directory. It installs like any other selected repository
+				// rather than degrading to a warning and no install at all.
+				configRoot := common
+				if name == "bare" {
+					configRoot = selected
+				}
+				got := initExcludeGit(t, selected, "config", "--file", filepath.Join(configRoot, "config"), "--get", "core.hooksPath")
 				require.Equal(t, filepath.Clean(destination), filepath.Clean(got))
 			}
 		})
