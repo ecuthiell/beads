@@ -390,7 +390,19 @@ func resolveInitHooksContext(workDir, beadsDir string) (*initHooksContext, error
 	env := gitenv.ScrubRouting(inherited)
 	paths, err := git.ResolveHooksContext(workDir, env)
 	if err != nil {
-		return nil, err
+		// A repository whose work tree does not resolve -- a bare repository, or
+		// a directory such as <repo>/.git that Git answers from -- has no work
+		// tree to anchor, but it does have a hooks directory, and bd installed
+		// into it before this resolver existed. Resolving that shape here keeps
+		// the selected, scrubbed context instead of turning a supported
+		// repository into a warning and no install at all. Any other failure is
+		// still a failure: the work-tree-less resolver rejects non-repositories
+		// and directories inside a work tree.
+		workTreeless, workTreelessErr := git.ResolveWorkTreelessHooksContext(workDir, env)
+		if workTreelessErr != nil {
+			return nil, err
+		}
+		paths = workTreeless
 	}
 	if beadsDir != "" && !filepath.IsAbs(beadsDir) {
 		beadsDir = filepath.Join(workDir, beadsDir)

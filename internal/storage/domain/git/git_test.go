@@ -116,29 +116,17 @@ func (s *testSuite) TestConfig_ReadFailuresAreNotMissing() {
 				s.Require().NoError(roleErr)
 				s.False(found)
 			}
-			if tc.name == "invalid_routing_boolean" {
-				// The same poison that fails the read above cannot reach beads.role,
-				// which resolves as absent rather than as a preserved read failure.
-				role, roleFound, roleErr := s.repo.GetConfig(s.Ctx(), "beads.role")
-				s.Require().NoError(roleErr)
-				s.False(roleFound)
-				s.Empty(role)
-				_, _, useCaseErr := domain.NewGitUseCase(s.tmpDir, s.repo).BeadsRole(s.Ctx())
-				s.Require().NoError(useCaseErr)
-			}
 		})
 	}
 }
 
 // TestConfig_ReadFailuresAreNotMissing's "invalid_routing_boolean" row used to
 // poison GIT_CONFIG_NOSYSTEM and expect the beads.role read to fail. beads.role
-// reads now scrub inherited Git routing, so that poison never reaches git for
-// this key; the row is retargeted to test.marker, which sits outside the scrub
-// and still fails, and it asserts there that the same poison leaves beads.role
-// absent rather than failing. The pair below pins both halves of the new
-// contract directly for beads.role. The general "a read failure is an error, not
-// an absent key" guard is unaffected: malformed_config still proves it for the
-// same key through the repository's own config file.
+// reads now scrub inherited suppression, so that poison never reaches git for
+// this key; that row therefore reads a key which still inherits it (core.bare)
+// and asserts the role read's immunity alongside. This test covers the half that
+// row cannot: under the same poison, the role read returns the value it was
+// given rather than merely resolving as absent.
 func (s *testSuite) TestConfig_BeadsRoleScrubsInheritedRoutingEnv() {
 	s.gitInit()
 	s.Require().NoError(s.repo.SetConfig(s.Ctx(), "beads.role", "maintainer"))
@@ -434,6 +422,56 @@ func TestRoleConfigIgnoresInheritedGitRouting(t *testing.T) {
 	}
 }
 
+// TestRoleConfigKeySpellingTakesScrubbedPath pins the case-insensitive key
+// match. Git resolves config key names case-insensitively, so every spelling of
+// beads.role must take the scrubbed path; a byte-exact compare would let
+// "Beads.Role" read and write whichever repository inherited routing selects.
+func TestRoleConfigKeySpellingTakesScrubbedPath(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	home := t.TempDir()
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, home)
+	}
+	runGit := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, gitenv.ScrubRouting(os.Environ())
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "fixture git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	// The canonical spelling is the control: it takes the scrubbed path under
+	// either comparator, so it proves the fixture routes as intended rather than
+	// the assertions passing vacuously.
+	for _, key := range []string{"beads.role", "Beads.Role", "BEADS.ROLE"} {
+		t.Run(key, func(t *testing.T) {
+			target, decoy := t.TempDir(), t.TempDir()
+			for _, dir := range []string{target, decoy} {
+				runGit(t, dir, "init", "--quiet")
+			}
+			runGit(t, target, "config", "--local", "beads.role", "target-role")
+			runGit(t, decoy, "config", "--local", "beads.role", "decoy-role")
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			repo := NewGitRepository(target)
+			got, found, err := repo.GetConfig(t.Context(), key)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, "target-role", got, "%s read through inherited routing", key)
+			require.NoError(t, repo.SetConfig(t.Context(), key, "written-role"))
+			require.Equal(t, "written-role", runGit(t, target, "config", "--local", "--get", "beads.role"))
+			require.Equal(t, "decoy-role", runGit(t, decoy, "config", "--local", "--get", "beads.role"),
+				"%s write escaped to the inherited repository", key)
+		})
+	}
+}
+
 func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 	for _, entry := range os.Environ() {
 		key := gitenv.EntryKey(entry)
@@ -508,9 +546,10 @@ func TestInitGitRepositoryUsesSelectedDirectory(t *testing.T) {
 				// gastownhall/beads#6477 made the reader propagate Git's exit
 				// error instead of mapping it to absence, so the generic
 				// constructor now surfaces the changed HOME's broken .gitconfig
-				// rather than reporting the key missing. The failure is itself
-				// the proof that generic role reads still use the current caller
-				// environment: only that environment can see this .gitconfig.
+				// rather than reporting the key missing. changedHome is the only
+				// HOME here holding a .gitconfig, so Git's refusal to parse that
+				// file is itself the proof that generic role reads still use the
+				// current caller environment rather than a captured one.
 				role, found, err := inherited.GetConfig(t.Context(), "beads.role")
 				require.Error(t, err, "generic role reads still use the current caller environment")
 				var inheritedExit *exec.ExitError
