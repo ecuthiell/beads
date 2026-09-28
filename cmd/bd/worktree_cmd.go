@@ -672,9 +672,9 @@ func scrubWorktreeGitRoutingEnv(env []string) []string {
 }
 
 // scrubWorktreeGitRoutingEnvForOS removes inherited Git repository, index,
-// object, namespace, executable, template, and config routing. It deliberately
-// preserves non-routing controls such as GIT_OPTIONAL_LOCKS; the removal runner
-// applies its stricter policy separately.
+// object, namespace, executable, template, and custom config routing. It keeps
+// explicit null config suppression, GIT_CONFIG_NOSYSTEM and non-routing controls
+// such as GIT_OPTIONAL_LOCKS; the removal runner applies its stricter policy separately.
 func scrubWorktreeGitRoutingEnvForOS(env []string, goos string) []string {
 	return gitenv.ScrubRoutingForOS(env, goos)
 }
@@ -707,33 +707,40 @@ func worktreeGitEnvKey(entry string) string {
 	return gitenv.EntryKey(entry)
 }
 
-// clearWorktreeGitRoutingEnv makes the command working directory the only
-// inherited input to repository selection, without changing process identity
-// or signal semantics. Unlike the child-process scrubs elsewhere in this
-// package, ClearRouting unsets the variables on the bd process itself, so bd's
-// own discovery — getGitContext, GetMainRepoRoot, FindBeadsDir and startup
-// config discovery — runs under the cleared environment for the whole command.
-// The trade-off is that the discovery-scope controls go with the redirection
-// ones, and they do not all move discovery the same way:
+// clearWorktreeGitRoutingEnv establishes the command working directory as the
+// repository-selection boundary without changing process identity or signal
+// semantics. Startup config discovery applies the same boundary to its one
+// pre-hook Git probe, and the .beads discovery probes that run against an
+// already selected path share it too (beads.selectedBeadsGitOutput and
+// ResolveBeadsDirForRepo). The generic internal/beads gitOutput probes and
+// internal/git/gitdir.go still honor inherited routing, so those planes can
+// still resolve a different repository than this one (bd-p4che).
+//
+// Unlike the child-process scrubs elsewhere in this package, ClearRouting
+// unsets the variables on the bd process itself, so bd's own discovery —
+// getGitContext, GetMainRepoRoot, FindBeadsDir and startup config discovery —
+// runs under the cleared environment for the whole command. The boundary
+// removes inherited discovery redirects, but it is not a floor: the
+// discovery-scope controls go with the redirection ones, and they do not all
+// move discovery the same way:
 //
 //   - GIT_CEILING_DIRECTORIES is a stop, so clearing it widens the walk: a
 //     stale inherited ceiling can no longer hide the repository the command is
 //     standing in, but with no repository at or below the working directory the
-//     walk can now reach a containing parent that ceiling excluded.
+//     walk can now reach a containing parent that ceiling excluded (init's role
+//     probe records the same trade-off).
 //   - GIT_DISCOVERY_ACROSS_FILESYSTEM only ever permits — git stops at a
 //     filesystem boundary unless this is true — so clearing it narrows the
 //     walk: a repository reachable from the working directory only by crossing
 //     a mount point is no longer found by any bd worktree verb, and there is no
 //     opt-out.
-//   - ClearRouting matches GIT_CONFIG by prefix, so the whole GIT_CONFIG*
-//     family — GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_COUNT and its
-//     numbered key/value pairs — is dropped for the command's lifetime rather
-//     than for one child probe.
-//
-// Startup config discovery applies the same scrub to its pre-hook config-path
-// probe only; the .beads database discovery probes in internal/beads still
-// honor inherited routing, so the two planes can resolve different
-// repositories.
+//   - ClearRouting matches GIT_CONFIG by prefix, so the redirecting members of
+//     the GIT_CONFIG* family — a custom GIT_CONFIG_GLOBAL or GIT_CONFIG_SYSTEM
+//     path, GIT_CONFIG_COUNT and its numbered key/value pairs — are dropped for
+//     the command's lifetime rather than for one child probe. The explicit
+//     suppression forms are the exception: ClearRouting keeps
+//     GIT_CONFIG_NOSYSTEM and the /dev/null spellings of GIT_CONFIG_GLOBAL and
+//     GIT_CONFIG_SYSTEM, which can blind a read but cannot redirect one.
 func clearWorktreeGitRoutingEnv(cmd *cobra.Command) error {
 	if !hasWorktreeCommandAncestor(cmd) {
 		return nil
