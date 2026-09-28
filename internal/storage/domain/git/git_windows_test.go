@@ -112,7 +112,7 @@ func TestGetConfigInFlightCancellation(t *testing.T) {
 		}
 		result := make(chan configResult, 1)
 		go func() {
-			value, found, err := NewGitRepository(cwd).GetConfig(ctx, "beads.role")
+			value, found, err := NewGitRepository(cwd).GetConfig(ctx, "beads.cancellation")
 			result <- configResult{value, found, err}
 		}()
 		var transferred, pid uint32
@@ -143,7 +143,7 @@ func TestGetConfigInFlightCancellation(t *testing.T) {
 		} else {
 			require.NoError(t, windows.ResetEvent(event))
 			write := &windows.Overlapped{HEvent: event}
-			writeData = []byte("[beads]\nrole = config-pipe-control\n")
+			writeData = []byte("[beads]\ncancellation = config-pipe-control\n")
 			var written uint32
 			writeErr := windows.WriteFile(pipe, writeData, &written, write)
 			if errors.Is(writeErr, windows.ERROR_IO_PENDING) {

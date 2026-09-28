@@ -37,13 +37,58 @@ export GIT_CONFIG_GLOBAL="$root/gitconfig"
 export TMPDIR="$root/tmp"
 export BEADS_TEST_IGNORE_REPO_CONFIG=1
 
+# Discovery ceilings. bd walks up from its working directory for .beads and
+# .beads/config.yaml, and git walks up for a repository. A test's working
+# directory is in the runfiles tree under the output base, which is usually
+# below the developer's HOME, so an unbounded walk would read and write their
+# real ~/.beads (and a host config would decide test results). Every walk stops
+# below the runfiles root, TEST_TMPDIR and this wrapper's root; a test's own
+# directories under them stay discoverable. Relying on the ceiling rather than
+# failing on an ancestor .beads is deliberate: a live ~/.beads above the output
+# base is normal on a developer machine.
+ceilings=""
+for d in "${TEST_SRCDIR:-}" "${TEST_TMPDIR:-}" "$root"; do
+	if [[ -n "$d" && -d "$d" ]]; then
+		ceilings="${ceilings:+$ceilings:}$(cd "$d" && pwd -P)"
+	fi
+done
+export BEADS_CEILING_DIRECTORIES="$ceilings"
+export GIT_CEILING_DIRECTORIES="$ceilings"
+# The migration-freeze marker walk is deliberately not bounded by the ceiling;
+# point it at a path that never exists so a MIGRATION-FREEZE file above the
+# output base cannot make write commands refuse inside tests.
+export BD_MIGRATION_FREEZE_FILE="$root/no-freeze-marker"
+
 # Same scrub as beads_test_env_enter; `--test_env=NAME` on a command line must
 # not be able to point a test at a live workspace or Dolt server.
 unset BEADS_DIR BEADS_DB BD_DB BD_JSON BD_NO_DB BD_NO_DAEMON BD_ACTOR \
 	BEADS_ACTOR GT_ROOT BEADS_DOLT_SHARED_SERVER BEADS_DOLT_SERVER_MODE \
 	BEADS_DOLT_AUTO_START BEADS_DOLT_SERVER_HOST BEADS_DOLT_SERVER_PORT \
 	BEADS_DOLT_PORT BEADS_DOLT_SERVER_DATABASE BEADS_DOLT_SERVER_SOCKET \
-	BEADS_DOLT_PASSWORD BEADS_TEST_REPO_ROOT
+	BEADS_DOLT_PASSWORD BEADS_TEST_REPO_ROOT BEADS_DOLT_BIN
+
+# Hermetic host tools: the pinned Dolt CLI (tools/bazel/dolt.bzl) goes first on
+# PATH, so no test runs whatever dolt the executor happens to have, or skips
+# because it has none. The directory comes from this wrapper's own runfiles,
+# which Bazel merges into every test's runfiles, so it is always declared;
+# missing it means broken wiring, and every test fails rather than skipping.
+hermetic_bin=""
+runfiles="${RUNFILES_DIR:-${TEST_SRCDIR:-}}"
+rel="${TEST_WORKSPACE:-_main}/tools/bazel/hermetic_bin"
+if [[ -n "$runfiles" && -x "$runfiles/$rel/dolt" ]]; then
+	hermetic_bin="$runfiles/$rel"
+elif [[ -n "${RUNFILES_MANIFEST_FILE:-}" && -f "$RUNFILES_MANIFEST_FILE" ]]; then
+	dolt_path="$(awk -v k="$rel/dolt" '$1 == k { print $2; exit }' "$RUNFILES_MANIFEST_FILE")"
+	if [[ -n "$dolt_path" && -x "$dolt_path" ]]; then
+		hermetic_bin="${dolt_path%/*}"
+	fi
+fi
+if [[ -z "$hermetic_bin" ]]; then
+	printf 'test_env: hermetic dolt not found at %s in the runfiles of this test (//tools/bazel:hermetic_bin)\n' "$rel/dolt" >&2
+	exit 1
+fi
+export PATH="$hermetic_bin:${PATH:-/bin:/usr/bin}"
+export BEADS_TEST_DOLT_BINARY="$hermetic_bin/dolt"
 
 # Not exec: the trap must run to remove $root. The exit status is the test's.
 status=0

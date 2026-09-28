@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/ceiling"
 	"github.com/steveyegge/beads/internal/gitenv"
 	"gopkg.in/yaml.v3"
 )
@@ -105,6 +106,7 @@ var YamlOnlyKeys = map[string]bool{
 	"jira.api_token":             true,
 	"gitlab.token":               true,
 	"ado.pat":                    true,
+	"notion.token":               true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -218,6 +220,7 @@ var secretKeyEnvVarHints = map[string]string{ //nolint:gosec // Values are envir
 	"ai.api_key":     "ANTHROPIC_API_KEY",
 	"github.token":   "GITHUB_TOKEN",
 	"linear.api_key": "LINEAR_API_KEY",
+	"notion.token":   "NOTION_TOKEN",
 }
 
 // secretKeyEnvVarHint returns a suggested environment variable name for a
@@ -748,7 +751,8 @@ func findProjectBeadsDir() string {
 		return ""
 	}
 
-	for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+	bound := ceiling.For(cwd)
+	for dir := cwd; dir != filepath.Dir(dir) && !bound.Excludes(dir); dir = filepath.Dir(dir) {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return beadsDir
