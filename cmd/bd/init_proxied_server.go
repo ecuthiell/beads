@@ -585,7 +585,10 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		isColocated := gitUC.IsColocatedJJGit(ctx)
 		switch {
 		case isJJ && !isColocated:
-			if !in.quiet {
+			// The install arm below took over the hook-status gate that used to
+			// wrap this whole switch. Keep it here too, or a pure-JJ repo with
+			// current hooks starts re-printing the alias hint on every init.
+			if !in.quiet && (!hooksInstalled() || hooksNeedUpdate()) {
 				printJJAliasInstructions()
 			}
 		case isColocated || isRepo:

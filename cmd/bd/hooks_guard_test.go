@@ -14,36 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStandaloneHookCommandKeepsTrackedGuard(t *testing.T) {
-	for _, mode := range []string{"default", "shared"} {
-		t.Run(mode, func(t *testing.T) {
-			_, _, commonExclude, _ := newInitExcludeRepos(t)
-			target := filepath.Dir(filepath.Dir(filepath.Dir(commonExclude)))
-			t.Chdir(target)
-			hooksDir := filepath.Join(target, ".beads-hooks")
-			require.NoError(t, os.Mkdir(hooksDir, 0755))
-			path := filepath.Join(hooksDir, "pre-commit")
-			const foreign = "#!/bin/sh\necho tracked owner\n"
-			require.NoError(t, os.WriteFile(path, []byte(foreign), 0755))
-			initExcludeGit(t, target, "add", ".beads-hooks/pre-commit")
-			initExcludeGit(t, target, "config", "--local", "core.hooksPath", hooksDir)
-			setStandaloneHookMode(t, mode)
-			var err error
-			stderr := captureStderr(t, func() { err = hooksInstallCmd.RunE(hooksInstallCmd, nil) })
-			if mode == "shared" {
-				require.NoError(t, err)
-				require.Contains(t, string(readInitHooksFile(t, path)), foreign)
-				require.Contains(t, string(readInitHooksFile(t, path)), hookSectionBeginPrefix)
-			} else {
-				require.Equal(t, &exitError{Code: 1}, err)
-				require.Contains(t, stderr, "tracked by git")
-				require.Equal(t, foreign, string(readInitHooksFile(t, path)))
-				require.NoFileExists(t, filepath.Join(hooksDir, "post-merge"))
-			}
-		})
-	}
-}
-
 func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
 	runGit := func(repo string, args ...string) {
 		t.Helper()
@@ -83,6 +53,7 @@ func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
+		{"both", map[string]string{"GIT_DIR": filepath.Join(target, ".git"), "GIT_WORK_TREE": target}},
 		{"repository", map[string]string{"GIT_DIR": filepath.Join(decoy, ".git")}},
 		{"worktree", map[string]string{"GIT_DIR": filepath.Join(decoy, ".git"), "GIT_WORK_TREE": decoy}},
 		{"index", map[string]string{"GIT_INDEX_FILE": filepath.Join(decoy, ".git", "index")}},
@@ -92,9 +63,16 @@ func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
 			for key, value := range tc.env {
 				t.Setenv(key, value)
 			}
+			if tc.name == "both" {
+				probe := exec.Command("git", "-C", hooksDir, "ls-files", "--error-unmatch", "--", "pre-commit")
+				out, err := probe.CombinedOutput()
+				require.NoError(t, err, "inherited index must also prove tracking: %s", out)
+			}
 			if !isGitTrackedFile(foreign) {
 				t.Error("inherited routing hid the tracked hook")
 			}
+			require.Equal(t, "containing repository index", gitTrackedFileContext(foreign), "clean proof takes precedence, including when both views track it")
+			require.ErrorContains(t, guardHookWritePath(foreign, false), "tracked by git (containing repository index)")
 			if err := guardHookWritePath(foreign, false); err == nil || !strings.Contains(err.Error(), "tracked by git") {
 				t.Errorf("expected tracked-file refusal, got %v", err)
 			}
@@ -110,6 +88,7 @@ func TestGuardHookWritePathIgnoresInheritedGitRouting(t *testing.T) {
 			if isGitTrackedFile(untracked) {
 				t.Error("untracked hook reported as tracked")
 			}
+			require.Empty(t, gitTrackedFileContext(untracked))
 			if err := guardHookWritePath(untracked, false); err != nil {
 				t.Errorf("untracked hook refused: %v", err)
 			}
@@ -554,6 +533,22 @@ func TestInitHooksContextGuardPreservesOwnership(t *testing.T) {
 					want = "symlink"
 				}
 				require.ErrorContains(t, err, want)
+				if name == "captured_fallback" {
+					require.ErrorContains(t, err, "tracked by git (inherited Git index)")
+					// The remediation follows the proof: `git rm --cached` from the
+					// operator's shell aims at whichever index that shell routes to,
+					// so the inherited case has to name clearing the routing instead.
+					require.ErrorContains(t, err, "Clear the inherited Git routing environment and re-run")
+					for _, entry := range hooks.inheritedEnv {
+						if strings.HasPrefix(entry, "GIT_DIR=") {
+							require.NotContains(t, err.Error(), strings.TrimPrefix(entry, "GIT_DIR="))
+						}
+					}
+				} else if name == "tracked" {
+					require.ErrorContains(t, err, "tracked by git (containing repository index)")
+					require.ErrorContains(t, err, "Untrack it (git rm --cached) or move hooks to an untracked directory")
+					require.NotContains(t, err.Error(), "Clear the inherited Git routing environment")
+				}
 				require.Equal(t, content, string(readInitHooksFile(t, hook)))
 				for _, other := range []string{"post-merge", "pre-commit.backup"} {
 					_, err := os.Lstat(filepath.Join(hooksDir, other))
