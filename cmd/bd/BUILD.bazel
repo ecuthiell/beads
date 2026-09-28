@@ -1,5 +1,11 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
+go_binary(
+    name = "preflight_go_fixture",
+    testonly = True,
+    srcs = ["testdata/preflight-go.go"],
+)
+
 go_library(
     name = "bd_lib",
     srcs = [
@@ -1126,6 +1132,7 @@ go_test(
     ],
     data = glob(["testdata/**"]) + [
         ":bd_for_tests",
+        ":preflight_go_fixture",
         ":go_srcs",
         "//:bd_test_files",
         "//cmd/bd/doctor:go_srcs",
@@ -1137,6 +1144,7 @@ go_test(
     env = {
         "BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)",
         "BEADS_TEST_GOFMT": "$(rlocationpath @go_sdk//:bin/gofmt)",
+        "BEADS_TEST_PREFLIGHT_GO": "$(rlocationpath :preflight_go_fixture)",
     },
     shard_count = 16,
     deps = [

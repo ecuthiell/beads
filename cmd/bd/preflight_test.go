@@ -264,47 +264,33 @@ func TestLintInvocationForRootMatchesChecklistAndProjectType(t *testing.T) {
 }
 
 func TestRunLintCheckAtBeadsExecutesCheckoutDriverAndReportsJSONCommand(t *testing.T) {
-	realGo, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatalf("locate Go toolchain for subprocess fixture: %v", err)
-	}
 	helperDir := t.TempDir()
-	helperSource := filepath.Join(helperDir, "fake-go.go")
-	const source = `package main
-
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-)
-
-func main() {
-	dir, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	marker, err := os.Create(os.Getenv("PREFLIGHT_LINT_MARKER"))
-	if err != nil {
-		panic(err)
-	}
-	defer marker.Close()
-	if err := json.NewEncoder(marker).Encode(map[string]any{"args": os.Args[1:], "dir": dir}); err != nil {
-		panic(err)
-	}
-	fmt.Println("synthetic checkout lint success")
-}
-`
-	if err := os.WriteFile(helperSource, []byte(source), 0o600); err != nil {
-		t.Fatalf("write fake Go source: %v", err)
-	}
 	helperName := "go"
 	if runtime.GOOS == "windows" {
 		helperName += ".exe"
 	}
 	helperPath := filepath.Join(helperDir, helperName)
-	build := exec.Command(realGo, "build", "-o", helperPath, helperSource)
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build fake Go executable: %v\n%s", err, output)
+	if bazeltest.IsBazel() {
+		fixture, err := bazeltest.RunfileEnv("BEADS_TEST_PREFLIGHT_GO")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(helperPath, data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		realGo, err := exec.LookPath("go")
+		if err != nil {
+			t.Fatalf("locate Go toolchain for subprocess fixture: %v", err)
+		}
+		build := exec.Command(realGo, "build", "-o", helperPath, "testdata/preflight-go.go")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fake Go executable: %v\n%s", err, output)
+		}
 	}
 
 	beads := writeMarkerDir(t, map[string]string{"go.mod": "module github.com/steveyegge/beads\n"})
