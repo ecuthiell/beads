@@ -764,6 +764,19 @@ func runCompactDolt(ctx context.Context) error {
 		pathErr = &storage.ErrUnsupported{Op: "ExternalGCPath", Backend: "active store"}
 	}
 	if pathErr != nil {
+		// Classify cancellation before formatting. ExternalGCPath probes ctx, so an
+		// interrupt or deadline surfaces here as a bare context error, and it is not
+		// an authority refusal: without this arm a SIGINT renders as the permanent
+		// "cannot select a local database" message plus the four-cause hint about
+		// port overrides and proxied servers, none of which applies. The ctx probe
+		// stays in ExternalGCPath deliberately — it is the only cancellation
+		// checkpoint before the uninterruptible external `dolt gc` below.
+		if errors.Is(pathErr, context.Canceled) || errors.Is(pathErr, context.DeadlineExceeded) {
+			return HandleErrorWithHint(
+				fmt.Sprintf("external Dolt garbage collection was interrupted: %v", pathErr),
+				"the command stopped before the active database was resolved, so no garbage collection ran. "+
+					"Re-run 'bd admin compact --dolt' to collect.")
+		}
 		var unsupported *storage.ErrUnsupported
 		if compactDryRun && errors.As(pathErr, &unsupported) {
 			if jsonOutput {
@@ -783,7 +796,8 @@ func runCompactDolt(ctx context.Context) error {
 		return HandleErrorWithHint(
 			fmt.Sprintf("cannot select a local database for external Dolt garbage collection: %v", pathErr),
 			"--dolt requires a locally managed owned/shared Dolt database. Port overrides (BEADS_DOLT_SERVER_PORT/BEADS_DOLT_PORT), "+
-				"external/gateway/proxied servers, and socket/TLS connections do not authorize local GC; owned mode also requires auto-start. "+
+				"external/gateway/proxied servers, and socket/TLS connections do not authorize local GC; owned mode also requires "+
+				"auto-start, so a hand-started owned server needs 'bd config set dolt.auto-start true'. "+
 				"Run 'bd doctor' to inspect the connection or ask the server administrator to run GC.")
 	}
 	if !filepath.IsAbs(doltPath) {

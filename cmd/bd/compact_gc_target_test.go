@@ -37,6 +37,17 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 	clearTelemetryEnv(t)
 	t.Setenv("BD_JSON_ENVELOPE", "0")
 	toolDir := buildCompactGCFixture(t)
+	// wantBackend pins which ErrUnsupported.Backend the refusal names, which is
+	// the only observable that distinguishes "the active store refused" (the
+	// store's own "external" sentinel, reached through storage.UnwrapStore) from
+	// "the interface assertion missed" ("active store"). Both render the same
+	// top-level message, so the *through decorators* rows are vacuous for the
+	// decorator claim without it.
+	//
+	// Known residual: "unsupported dry run through decorators" still cannot
+	// discriminate. Its benign dry-run preview is byte-identical for both error
+	// origins and carries no backend, so no CLI-level assertion distinguishes
+	// them; the non-dry-run decorator row is what pins that path.
 	for _, tc := range []struct {
 		name, mode, pathKind     string
 		shared, dry, unsupported bool
@@ -45,6 +56,8 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 		calls                    int
 		wantErr                  bool
 		wantMessage              string
+		wantBackend              string
+		wantHint                 string
 	}{
 		{name: "owned active", calls: 1},
 		{name: "shared active despite stale project root", shared: true, calls: 1},
@@ -53,14 +66,20 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 		{name: "older CLI fallback", mode: "fallback", calls: 2},
 		{name: "real failure is not retried", mode: "failure", calls: 1, wantErr: true},
 		{name: "dry run", dry: true},
-		{name: "unsupported with plausible local path", unsupported: true, wantErr: true},
-		{name: "unsupported text output", unsupported: true, plain: true, wantErr: true},
-		{name: "unsupported enveloped output", unsupported: true, envelope: true, wantErr: true},
+		{name: "unsupported with plausible local path", unsupported: true, wantErr: true, wantBackend: "external"},
+		{name: "unsupported text output", unsupported: true, plain: true, wantErr: true, wantBackend: "external"},
+		{name: "unsupported enveloped output", unsupported: true, envelope: true, wantErr: true, wantBackend: "external"},
 		{name: "unsupported dry run", unsupported: true, dry: true},
-		{name: "unsupported through decorators", decorated: true, unsupported: true, wantErr: true},
+		{name: "unsupported through decorators", decorated: true, unsupported: true, wantErr: true, wantBackend: "external"},
 		{name: "unsupported dry run through decorators", decorated: true, unsupported: true, dry: true},
-		{name: "size capability is insufficient", pathKind: "size-only", wantErr: true},
-		{name: "general locator is insufficient", pathKind: "locator-only", wantErr: true},
+		{name: "cancelled before the active database is resolved", pathKind: "cancelled", wantErr: true,
+			wantMessage: "external Dolt garbage collection was interrupted", wantHint: "Re-run 'bd admin compact --dolt'"},
+		{name: "cancelled in dry run", pathKind: "cancelled", dry: true, wantErr: true,
+			wantMessage: "external Dolt garbage collection was interrupted", wantHint: "Re-run 'bd admin compact --dolt'"},
+		{name: "deadline exceeded before the active database is resolved", pathKind: "deadline", wantErr: true,
+			wantMessage: "external Dolt garbage collection was interrupted", wantHint: "Re-run 'bd admin compact --dolt'"},
+		{name: "size capability is insufficient", pathKind: "size-only", wantErr: true, wantBackend: "active store"},
+		{name: "general locator is insufficient", pathKind: "locator-only", wantErr: true, wantBackend: "active store"},
 		{name: "missing declared path", pathKind: "missing", wantErr: true, wantMessage: "active Dolt database directory is unavailable"},
 		{name: "missing declared path in dry run", pathKind: "missing", dry: true, wantErr: true, wantMessage: "active Dolt database directory is unavailable"},
 		{name: "file is not a database directory", pathKind: "file", wantErr: true, wantMessage: "is not a directory"},
@@ -111,6 +130,12 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 				candidate.directory = ""
 			case "relative":
 				candidate.directory = "relative-database"
+			case "cancelled":
+				// What the real DoltStore.ExternalGCPath returns for a cancelled
+				// ctx: the bare context error, not an ErrUnsupported.
+				candidate.err = context.Canceled
+			case "deadline":
+				candidate.err = context.DeadlineExceeded
 			}
 			if tc.decorated {
 				t.Setenv("BD_OTEL_STDOUT", "true")
@@ -166,8 +191,28 @@ func TestRunCompactDoltTargetsOnlyAuthorizedActiveDatabase(t *testing.T) {
 				if wantMessage == "" {
 					wantMessage = "cannot select a local database for external Dolt garbage collection"
 				}
-				if !strings.Contains(message, wantMessage) || !strings.Contains(hint, "bd doctor") {
+				wantHint := tc.wantHint
+				if wantHint == "" {
+					wantHint = "bd doctor"
+				}
+				if !strings.Contains(message, wantMessage) || !strings.Contains(hint, wantHint) {
 					t.Fatalf("refusal lost its cause or actionable hint: %s", output)
+				}
+				// A cancellation must not be dressed as a permanent authority
+				// refusal: neither the refusal message nor its four-cause hint may
+				// appear, in dry-run or otherwise.
+				if tc.pathKind == "cancelled" || tc.pathKind == "deadline" {
+					for _, forbidden := range []string{"cannot select a local database", "BEADS_DOLT_SERVER_PORT", "server administrator"} {
+						if strings.Contains(message, forbidden) || strings.Contains(hint, forbidden) {
+							t.Errorf("cancellation reported as an authority refusal (%q present): %s", forbidden, output)
+						}
+					}
+				}
+				if tc.wantBackend != "" {
+					wantBackend := "not supported by the " + tc.wantBackend + " backend"
+					if !strings.Contains(message, wantBackend) {
+						t.Errorf("refusal names the wrong origin: want %q in %q", wantBackend, message)
+					}
 				}
 				if tc.unsupported {
 					for _, condition := range []string{"BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT", "auto-start", "external", "gateway", "proxied", "socket", "TLS", "server administrator"} {
