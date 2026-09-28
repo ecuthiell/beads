@@ -151,6 +151,10 @@ func TestGitCmdInDirSuppressesWorktreeHookAfterRoutingScrub(t *testing.T) {
 	for _, key := range []string{"HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME"} {
 		t.Setenv(key, profile)
 	}
+	suppression := map[string]string{"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_SYSTEM": os.DevNull}
+	for key, value := range suppression {
+		t.Setenv(key, value)
+	}
 	repo := t.TempDir()
 	runGit := func(args ...string) {
 		t.Helper()
@@ -185,6 +189,10 @@ func TestGitCmdInDirSuppressesWorktreeHookAfterRoutingScrub(t *testing.T) {
 			t.Setenv("BD_WORKTREE_HOOK_MARKER", filepath.ToSlash(marker))
 			cmd := gitCmdInDir(t.Context(), repo, "worktree", "add", "--detach", filepath.Join(root, "checkout"), "HEAD")
 			for _, entry := range cmd.Env {
+				key := worktreeGitEnvKey(entry)
+				if want, ok := suppression[key]; ok && entry == key+"="+want {
+					continue
+				}
 				if gitenv.IsRoutingKeyForOS(worktreeGitEnvKey(entry), runtime.GOOS) && entry != "GIT_TEMPLATE_DIR=" {
 					t.Fatalf("worktree command retained routing state: %q", entry)
 				}
