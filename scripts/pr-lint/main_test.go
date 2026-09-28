@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,6 +23,7 @@ type recordingRunner struct {
 	runErrors      []error
 	outputCommands []commandSpec
 	runCommands    []commandSpec
+	outputFunc     func(context.Context, commandSpec) ([]byte, []byte, error)
 }
 
 func (runner *recordingRunner) lookPath(name string) (string, error) {
@@ -28,8 +33,11 @@ func (runner *recordingRunner) lookPath(name string) (string, error) {
 	return "", errors.New("synthetic missing command")
 }
 
-func (runner *recordingRunner) output(_ context.Context, spec commandSpec) ([]byte, []byte, error) {
+func (runner *recordingRunner) output(ctx context.Context, spec commandSpec) ([]byte, []byte, error) {
 	runner.outputCommands = append(runner.outputCommands, spec)
+	if runner.outputFunc != nil {
+		return runner.outputFunc(ctx, spec)
+	}
 	return []byte(runner.goEnvOutput), []byte(runner.goEnvStderr), runner.goEnvErr
 }
 
@@ -74,10 +82,14 @@ func TestRunUsesCanonicalNativeAndWindowsPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	if len(runner.outputCommands) != 1 {
-		t.Fatalf("go env calls = %d, want 1", len(runner.outputCommands))
+	wantProbes := 1
+	if runtime.GOOS == "windows" {
+		wantProbes = 2
 	}
-	wantGoArgs := []string{"env", "-json", "GOOS", "CGO_ENABLED"}
+	if len(runner.outputCommands) != wantProbes {
+		t.Fatalf("go env calls = %d, want %d", len(runner.outputCommands), wantProbes)
+	}
+	wantGoArgs := []string{"env", "-json", "GOOS", "CGO_ENABLED", "GOROOT", "GOVERSION"}
 	if got := runner.outputCommands[0].args; !reflect.DeepEqual(got, wantGoArgs) {
 		t.Fatalf("go env args = %#v, want %#v", got, wantGoArgs)
 	}
@@ -341,4 +353,115 @@ func containsExact(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+func TestRunUsesEachWindowsPassSelectedToolchain(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows auto-selection creates the extra process")
+	}
+	nativeRoot, crossRoot := filepath.Join(t.TempDir(), "workspace SDK"), filepath.Join(t.TempDir(), "module SDK")
+	environ := []string{"Path=original", "GOTOOLCHAIN=auto", "GOROOT=custom", "GOWORK=workspace"}
+	runner := &recordingRunner{paths: map[string]string{"go": "launcher", "golangci-lint": "lint"}}
+	var probeContext context.Context
+	runner.outputFunc = func(ctx context.Context, spec commandSpec) ([]byte, []byte, error) {
+		if probeContext != nil && ctx != probeContext {
+			t.Fatal("toolchain discovery escaped the shared probe deadline")
+		}
+		probeContext = ctx
+		selected := nativeGoEnvironment{GOOS: "windows", CGOEnabled: "1", GOROOT: nativeRoot, GOVERSION: "go1.26.7"}
+		if work, _ := environmentValue(spec.env, "GOWORK", true); work == "off" {
+			selected.GOROOT, selected.GOVERSION, selected.CGOEnabled = crossRoot, "go1.26.5", "0"
+		}
+		assertEnvironmentValue(t, spec.env, "PATH", "original", true)
+		if spec.name != "launcher" {
+			if spec.name != filepath.Join(selected.GOROOT, "bin", "go.exe") {
+				t.Fatalf("candidate = %q, root = %q", spec.name, selected.GOROOT)
+			}
+			assertEnvironmentValue(t, spec.env, "GOTOOLCHAIN", "local", true)
+		}
+		data, err := json.Marshal(selected)
+		return data, nil, err
+	}
+	var stderr bytes.Buffer
+	if code := run(nil, ".", environ, io.Discard, &stderr, runner); code != 0 || len(runner.runCommands) != 2 {
+		t.Fatalf("run = %d, passes = %d, stderr=%s", code, len(runner.runCommands), &stderr)
+	}
+	for index, root := range []string{nativeRoot, crossRoot} {
+		env := runner.runCommands[index].env
+		assertSingleLogicalEnvironmentKey(t, env, "PATH")
+		assertEnvironmentValue(t, env, "PATH", filepath.Join(root, "bin")+";original", true)
+		assertEnvironmentValue(t, env, "GOTOOLCHAIN", "auto", true)
+		assertEnvironmentValue(t, env, "GOROOT", "custom", true)
+	}
+	if environ[0] != "Path=original" {
+		t.Fatal("lint changed the caller's PATH")
+	}
+}
+
+func TestSelectedGoFallsBackForNonstandardSDK(t *testing.T) {
+	root := t.TempDir()
+	selected := nativeGoEnvironment{GOROOT: root, GOVERSION: "go1.26.7"}
+	environ := []string{"Path=original", "GOTOOLCHAIN=auto", "GOROOT=custom"}
+	for _, tc := range []struct {
+		name, root, version string
+		err                 error
+	}{
+		{"missing executable", root, "go1.26.7", os.ErrNotExist},
+		{"wrong version", root, "go1.26.5", nil},
+		{"different root", filepath.Join(root, "other"), "go1.26.7", nil},
+		{"deadline", root, "go1.26.7", context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(nativeGoEnvironment{GOROOT: tc.root, GOVERSION: tc.version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &recordingRunner{goEnvOutput: string(data), goEnvErr: tc.err}
+			var diagnostic bytes.Buffer
+			got := preferSelectedGo(context.Background(), ".", environ, selected, &diagnostic, runner)
+			if !reflect.DeepEqual(got, environ) || !strings.Contains(diagnostic.String(), "retaining original Go PATH") {
+				t.Fatalf("fallback env=%v, diagnostic=%s", got, &diagnostic)
+			}
+		})
+	}
+}
+
+func TestSelectedGoIsResolvedByLintChild(t *testing.T) {
+	const marker = "BEADS_SELECTED_GO_PROBE"
+	if expected := os.Getenv(marker); expected != "" {
+		resolved, err := exec.LookPath("go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, gotErr := os.Stat(resolved)
+		want, wantErr := os.Stat(expected)
+		if gotErr != nil || wantErr != nil || !os.SameFile(got, want) {
+			t.Fatalf("child resolved %q, want identity of %q", resolved, expected)
+		}
+		return
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable discovery")
+	}
+	root := t.TempDir()
+	selectedBin, oldBin := filepath.Join(root, "selected SDK", "bin"), filepath.Join(root, "old SDK", "bin")
+	for _, bin := range []string{selectedBin, oldBin} {
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, "go.exe"), nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selected := nativeGoEnvironment{GOROOT: filepath.Dir(selectedBin), GOVERSION: "go1.26.7"}
+	data, err := json.Marshal(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environ := setEnvironment(os.Environ(), map[string]string{"PATH": oldBin, marker: filepath.Join(selectedBin, "go.exe")}, true)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSelectedGoIsResolvedByLintChild$")
+	cmd.Env = preferSelectedGo(context.Background(), root, environ, selected, io.Discard, &recordingRunner{goEnvOutput: string(data)})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lint child Go discovery: %v\n%s", err, output)
+	}
 }

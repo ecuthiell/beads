@@ -59,6 +59,13 @@ merge tag lists. Each lint process has a six-minute context and a five-minute
 golangci-lint timeout. Cancelling preflight's outer `go run` command does not
 guarantee immediate descendant cleanup.
 
+On Windows, the driver checks each pass's selected Go SDK and prefers its
+`bin` directory only in that linter child's PATH. This avoids an extra Go
+auto-selection process surviving cancellation. Discovery shares the existing
+30-second probe budget; custom SDKs that cannot be verified retain the original
+PATH. Toolchain requests, formatting, and lint deadlines are unchanged. This
+does not guarantee cleanup of compiler descendants or fix slow package loading.
+
 ## Policy
 
 Treat new lint findings as defects to fix before merge. Do not add a tolerated

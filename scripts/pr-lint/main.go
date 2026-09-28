@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ func (osProcessRunner) run(ctx context.Context, spec commandSpec, stdout, stderr
 type nativeGoEnvironment struct {
 	GOOS       string `json:"GOOS"`
 	CGOEnabled string `json:"CGO_ENABLED"`
+	GOROOT     string `json:"GOROOT"`
+	GOVERSION  string `json:"GOVERSION"`
 }
 
 func main() {
@@ -98,16 +101,38 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 	}
 
 	effectiveEnv := buildEnvironment(environ, runtime.GOOS == "windows")
-	native, code := readNativeGoEnvironment(dir, effectiveEnv, goPath, stderr, runner)
+	probeCtx, cancel := context.WithTimeout(context.Background(), goEnvTimeout)
+	defer cancel()
+	native, code := readNativeGoEnvironment(probeCtx, dir, effectiveEnv, goPath, stderr, runner)
 	if code != 0 {
 		return code
 	}
 
 	mergeBase, _ := environmentValue(effectiveEnv, "BD_LINT_NEW_FROM_MERGE_BASE", runtime.GOOS == "windows")
 	argsForLint := lintArgs(mergeBase)
+	skipWindows := native.GOOS == "windows" && native.CGOEnabled == "0"
+	windowsEnv := setEnvironment(effectiveEnv, map[string]string{
+		"CGO_ENABLED": "0",
+		"GOARCH":      "amd64",
+		"GOOS":        "windows",
+		"GOWORK":      "off",
+	}, runtime.GOOS == "windows")
+	nativeEnv := effectiveEnv
+	if runtime.GOOS == "windows" {
+		nativeEnv = preferSelectedGo(probeCtx, dir, effectiveEnv, native, stderr, runner)
+		if !skipWindows {
+			// GOWORK=off can select a different toolchain. Probe the original
+			// Go executable and PATH again, before either lint pass starts.
+			selected, code := readNativeGoEnvironment(probeCtx, dir, windowsEnv, goPath, stderr, runner)
+			if code == 0 {
+				windowsEnv = preferSelectedGo(probeCtx, dir, windowsEnv, selected, stderr, runner)
+			}
+		}
+	}
+	cancel() // All discovery shares the existing 30-second probe budget.
 	if code := runLintPass(
 		"golangci-lint (native)",
-		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: effectiveEnv},
+		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: nativeEnv},
 		stdout,
 		stderr,
 		runner,
@@ -115,17 +140,11 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 		return code
 	}
 
-	if native.GOOS == "windows" && native.CGOEnabled == "0" {
+	if skipWindows {
 		fmt.Fprintln(stdout, "==> golangci-lint (windows/amd64, non-CGO) already covered by native pass")
 		return 0
 	}
 
-	windowsEnv := setEnvironment(effectiveEnv, map[string]string{
-		"CGO_ENABLED": "0",
-		"GOARCH":      "amd64",
-		"GOOS":        "windows",
-		"GOWORK":      "off",
-	}, runtime.GOOS == "windows")
 	return runLintPass(
 		"golangci-lint (windows/amd64, non-CGO)",
 		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: windowsEnv},
@@ -136,18 +155,16 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 }
 
 func readNativeGoEnvironment(
+	ctx context.Context,
 	dir string,
 	environ []string,
 	goPath string,
 	stderr io.Writer,
 	runner processRunner,
 ) (nativeGoEnvironment, int) {
-	ctx, cancel := context.WithTimeout(context.Background(), goEnvTimeout)
-	defer cancel()
-
 	spec := commandSpec{
 		name: goPath,
-		args: []string{"env", "-json", "GOOS", "CGO_ENABLED"},
+		args: []string{"env", "-json", "GOOS", "CGO_ENABLED", "GOROOT", "GOVERSION"},
 		dir:  dir,
 		env:  environ,
 	}
@@ -173,6 +190,34 @@ func readNativeGoEnvironment(
 		return nativeGoEnvironment{}, 1
 	}
 	return native, 0
+}
+
+// On Windows, Go auto-selection starts another process instead of replacing
+// itself. Prefer the selected SDK for lint so cancellation reaches that Go
+// process directly. This is not general descendant-process containment.
+func preferSelectedGo(ctx context.Context, dir string, environ []string, selected nativeGoEnvironment, stderr io.Writer, runner processRunner) []string {
+	if !filepath.IsAbs(selected.GOROOT) || selected.GOVERSION == "" {
+		return environ
+	}
+	bin := filepath.Join(selected.GOROOT, "bin")
+	// GOROOT can describe a source-only or custom installation. Verify the
+	// candidate without allowing it to switch toolchains during this probe.
+	output, diagnostic, err := runner.output(ctx, commandSpec{
+		name: filepath.Join(bin, "go.exe"),
+		args: []string{"env", "-json", "GOROOT", "GOVERSION"},
+		dir:  dir,
+		env:  setEnvironment(environ, map[string]string{"GOTOOLCHAIN": "local"}, true),
+	})
+	writeDiagnostic(stderr, diagnostic)
+	var candidate nativeGoEnvironment
+	if err != nil || json.Unmarshal(output, &candidate) != nil ||
+		candidate.GOVERSION != selected.GOVERSION ||
+		!strings.EqualFold(filepath.Clean(candidate.GOROOT), filepath.Clean(selected.GOROOT)) {
+		fmt.Fprintln(stderr, "Windows lint: retaining original Go PATH; selected SDK could not be verified")
+		return environ
+	}
+	path, _ := environmentValue(environ, "PATH", true)
+	return setEnvironment(environ, map[string]string{"PATH": bin + string(os.PathListSeparator) + path}, true)
 }
 
 func writeDiagnostic(destination io.Writer, output []byte) {
