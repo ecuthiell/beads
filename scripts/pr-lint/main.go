@@ -200,6 +200,10 @@ func preferSelectedGo(ctx context.Context, dir string, environ []string, selecte
 		return environ
 	}
 	bin := filepath.Join(selected.GOROOT, "bin")
+	if strings.ContainsRune(bin, os.PathListSeparator) {
+		fmt.Fprintln(stderr, "Windows lint: retaining original Go PATH; selected SDK directory contains a PATH separator")
+		return environ
+	}
 	// GOROOT can describe a source-only or custom installation. Verify the
 	// candidate without allowing it to switch toolchains during this probe.
 	output, diagnostic, err := runner.output(ctx, commandSpec{

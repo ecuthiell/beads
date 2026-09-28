@@ -402,6 +402,19 @@ func TestSelectedGoFallsBackForNonstandardSDK(t *testing.T) {
 	root := t.TempDir()
 	selected := nativeGoEnvironment{GOROOT: root, GOVERSION: "go1.26.7"}
 	environ := []string{"Path=original", "GOTOOLCHAIN=auto", "GOROOT=custom"}
+	t.Run("PATH separator", func(t *testing.T) {
+		unsupported := selected
+		unsupported.GOROOT += string(os.PathListSeparator) + "SDK"
+		data, err := json.Marshal(unsupported)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diagnostic bytes.Buffer
+		got := preferSelectedGo(context.Background(), ".", environ, unsupported, &diagnostic, &recordingRunner{goEnvOutput: string(data)})
+		if !reflect.DeepEqual(got, environ) || !strings.Contains(diagnostic.String(), "retaining original Go PATH") {
+			t.Fatalf("fallback env=%v, diagnostic=%s", got, &diagnostic)
+		}
+	})
 	for _, tc := range []struct {
 		name, root, version string
 		err                 error
