@@ -45,6 +45,9 @@ func CheckDir(dir string) ([]Violation, error) {
 		if err != nil {
 			return nil, err
 		}
+		if allowsBareCommands(data) {
+			continue
+		}
 		var workflow workflow
 		if err := yaml.Unmarshal(data, &workflow); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -84,6 +87,28 @@ type workflowJob struct {
 type workflowStep struct {
 	Name string `yaml:"name"`
 	Run  string `yaml:"run"`
+}
+
+// allowsBareCommands reports whether a workflow opts out of this check with the
+// repository's existing marker in its first five lines.
+//
+// This check runs in the required pr-policy lane, so without an opt-out a
+// workflow that legitimately needs a bare `go` command has no way through. The
+// marker and its five-line window are not invented here: scripts/check-build-tags.sh
+// already honors exactly `^# build-tags: allow-bare` within `head -n 5`, and
+// engdocs/ICU-POLICY.md documents it as the file-level escape. Matching that
+// spelling and that window keeps one convention rather than two, so an operator
+// who learned the shell checker's marker finds it works on workflows too.
+func allowsBareCommands(data []byte) bool {
+	for i, line := range strings.Split(string(data), "\n") {
+		if i >= 5 {
+			return false
+		}
+		if strings.HasPrefix(line, "# build-tags: allow-bare") {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckRun checks recognizable direct commands in one decoded run scalar.

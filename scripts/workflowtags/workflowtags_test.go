@@ -11,6 +11,12 @@ func TestCheckRun(t *testing.T) {
 		name       string
 		run        string
 		violations int
+		// wantLine, when non-zero, pins the reported physical line of a single
+		// violation. The Line field is the operator-facing half of this check —
+		// it is what the error message points at — and nothing asserted it, so a
+		// regression that reported every violation at line 1 would have been
+		// invisible. Only meaningful on multi-line runs.
+		wantLine int
 	}{
 		{name: "direct tagged", run: `go test -tags=gms_pure_go ./...`},
 		{name: "double dash tagged", run: `go build --tags=gms_pure_go ./...`},
@@ -33,7 +39,13 @@ func TestCheckRun(t *testing.T) {
 		{name: "pinned run arguments", run: `go run example.com/tool@latest --help`},
 		{name: "pinned tool with flags is outside exemption", run: `go install -pgo off example.com/tool@v1.2.3`, violations: 1},
 		{name: "bare", run: `go test ./...`, violations: 1},
-		{name: "source is not workflow authority", run: "source ./.buildflags\ngo test ./...", violations: 1},
+		{name: "source is not workflow authority", run: "source ./.buildflags\ngo test ./...", violations: 1, wantLine: 2},
+		// The continuation case above is tagged, so it reports no violation and
+		// cannot show which physical line a continued command is attributed to.
+		// This is the same shape that does violate, so the attribution is
+		// observable: a logical line spanning three physical ones must be
+		// reported at the first.
+		{name: "continuation reports the first physical line", run: "go test \\\n  -race \\\n  ./...", violations: 1, wantLine: 1},
 		{name: "variable tag", run: `go build -tags "$BEADS_BUILD_TAGS" ./cmd/bd`, violations: 1},
 		{name: "double dash variable tag", run: `go build --tags="$BEADS_BUILD_TAGS" ./cmd/bd`, violations: 1},
 		{name: "tag substring prefix", run: `go test -tags=notgms_pure_go ./...`, violations: 1},
@@ -70,6 +82,14 @@ func TestCheckRun(t *testing.T) {
 			got := CheckRun(tt.run)
 			if len(got) != tt.violations {
 				t.Fatalf("got %d violation(s), want %d: %#v", len(got), tt.violations, got)
+			}
+			if tt.wantLine != 0 {
+				if len(got) != 1 {
+					t.Fatalf("wantLine needs exactly one violation, got %d: %#v", len(got), got)
+				}
+				if got[0].Line != tt.wantLine {
+					t.Errorf("violation line = %d, want %d: %#v", got[0].Line, tt.wantLine, got[0])
+				}
 			}
 		})
 	}
@@ -124,10 +144,61 @@ func TestCheckDirRejectsCrossStepSourceAuthority(t *testing.T) {
 	if len(violations) != 1 || violations[0].Step != "Bare command" {
 		t.Fatalf("violations = %#v, want one in Bare command", violations)
 	}
+	// Path and Job are the rest of the operator-facing attribution: the error
+	// line names all three, and CheckDir is the only thing that fills them in
+	// (CheckRun leaves them empty), so they belong to this test.
+	if want := filepath.Join(dir, "fixture.yml"); violations[0].Path != want {
+		t.Errorf("violation path = %q, want %q", violations[0].Path, want)
+	}
+	if violations[0].Job != "check" {
+		t.Errorf("violation job = %q, want %q", violations[0].Job, "check")
+	}
 }
 
 func TestCheckDirRejectsEmptyInventory(t *testing.T) {
 	if _, err := CheckDir(t.TempDir()); err == nil {
 		t.Fatal("CheckDir succeeded without workflow files")
+	}
+}
+
+// TestCheckDirHonorsAllowBareMarker pins the file-level opt-out. This check runs
+// in the required pr-policy lane, so a workflow that legitimately needs a bare
+// `go` command needs a way through, and the repository already has one:
+// scripts/check-build-tags.sh honors `# build-tags: allow-bare` within the first
+// five lines, and engdocs/ICU-POLICY.md documents that window. The same spelling
+// and the same window apply here rather than a second convention.
+func TestCheckDirHonorsAllowBareMarker(t *testing.T) {
+	violating := `jobs:
+  check:
+    steps:
+      - name: Bare command
+        run: go test ./...
+`
+	for _, tc := range []struct {
+		name       string
+		prefix     string
+		violations int
+	}{
+		{name: "no marker", prefix: "", violations: 1},
+		{name: "marker on the first line", prefix: "# build-tags: allow-bare\n"},
+		{name: "marker on the fifth line", prefix: "#\n#\n#\n#\n# build-tags: allow-bare\n"},
+		// Sixth line is outside the window the shell checker uses, so the
+		// opt-out must not apply -- otherwise the two checkers disagree about
+		// the same marker.
+		{name: "marker past the window", prefix: "#\n#\n#\n#\n#\n# build-tags: allow-bare\n", violations: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fixture.yml"), []byte(tc.prefix+violating), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			violations, err := CheckDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(violations) != tc.violations {
+				t.Fatalf("got %d violation(s), want %d: %#v", len(violations), tc.violations, violations)
+			}
+		})
 	}
 }
