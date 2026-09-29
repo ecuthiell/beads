@@ -18,6 +18,10 @@ import (
 const (
 	docFreshnessRequiredSuite = "doc-freshness"
 	requiredSuiteContractTest = "TestRequiredSuiteContract"
+	// requiredSuiteChildEnv marks a child spawned by runSuiteTestProcess. Arms that
+	// hand a child a *valid* selection must not re-enter, or a broken flag guard
+	// would recurse instead of failing.
+	requiredSuiteChildEnv = "BEADS_TEST_REQUIRED_SUITE_CHILD"
 )
 
 var requiredSuite = flag.String(
@@ -45,6 +49,7 @@ var requiredSuiteDefinitions = map[string]requiredSuiteDefinition{
 			"TestDocFreshnessReportsUnavailableTodayProvider",
 			"TestDocFreshnessReportsInvalidTodayProviderOutput",
 			"TestDocFreshnessReportsInvalidTodayOverride",
+			"TestDocFreshnessRejectsMultipleLastReviewedMarkers",
 		},
 	},
 }
@@ -117,6 +122,38 @@ func TestRequiredSuiteContract(t *testing.T) {
 		output, exitCode := runSuiteTestProcess(t, "^$", "")
 		if exitCode != 0 {
 			t.Fatalf("inactive focused child exit = %d, want 0:\n%s", exitCode, output)
+		}
+	})
+
+	// The table above injects synthetic requiredSuiteFlags values, so it proves only
+	// that the predicates reject narrowing flags. These arms pass real test flags to
+	// a child alongside a valid -test.run, so a broken currentRequiredSuiteFlags
+	// lookup key cannot silently reopen the fail-open hole. Each arm asserts its own
+	// diagnostic rather than the generic prefix: a wrong lookup key reads the zero
+	// value and falls through to a different failure, which the prefix would accept.
+	// They stay outside "compiled suite" because the flag guards run ahead of the
+	// inventory check, so they also hold where the doc tests are not compiled.
+	t.Run("real flag reads", func(t *testing.T) {
+		if os.Getenv(requiredSuiteChildEnv) != "" {
+			// A valid selection includes this test, so a child that got past a broken
+			// guard would re-enter here and spawn without bound. Stopping at depth 1
+			// makes that regression a failed assertion instead of a hang.
+			t.Skip("child process: a valid selection re-enters this test")
+		}
+		for _, test := range []struct {
+			arg, want string
+		}{
+			{arg: "-test.skip=" + suite.tests[0], want: fmt.Sprintf("forbids -test.skip=%q", suite.tests[0])},
+			{arg: "-test.cpu=1,2", want: `forbids -test.cpu="1,2"`},
+			{arg: "-test.list=.", want: `forbids -test.list="."`},
+			{arg: "-test.short", want: "forbids -test.short"},
+		} {
+			t.Run("TestMain rejects real "+test.arg, func(t *testing.T) {
+				output, exitCode := runSuiteTestProcess(t, valid.run, docFreshnessRequiredSuite, test.arg)
+				if exitCode == 0 || !strings.Contains(output, test.want) {
+					t.Fatalf("exit = %d, want nonzero with %q:\n%s", exitCode, test.want, output)
+				}
+			})
 		}
 	})
 
@@ -323,7 +360,7 @@ func isGoTestName(name, prefix string) bool {
 	return !unicode.IsLower(next)
 }
 
-func runSuiteTestProcess(t *testing.T, run, suite string) (string, int) {
+func runSuiteTestProcess(t *testing.T, run, suite string, extraArgs ...string) (string, int) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -333,7 +370,10 @@ func runSuiteTestProcess(t *testing.T, run, suite string) (string, int) {
 	if suite != "" {
 		args = append(args, "-required-suite="+suite)
 	}
-	output, runErr := exec.Command(executable, args...).CombinedOutput()
+	args = append(args, extraArgs...)
+	command := exec.Command(executable, args...)
+	command.Env = append(os.Environ(), requiredSuiteChildEnv+"=1")
+	output, runErr := command.CombinedOutput()
 	if runErr == nil {
 		return string(output), 0
 	}
