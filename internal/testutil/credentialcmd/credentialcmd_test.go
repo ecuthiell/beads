@@ -56,3 +56,26 @@ func TestProtocol(t *testing.T) {
 		}
 	})
 }
+
+// TestDispatchIgnoresAnEnvArmedProcessWithoutTheSentinel pins the half of the
+// gate that keeps a foreign helper alive. command() arms helperProcessEnv in
+// the parent test process, and BEADS_-prefixed variables reach every re-exec'd
+// child through the integration env allowlist — so a package that re-execs its
+// own test binary for an unrelated reason (internal/storage/dolt does) can find
+// itself env-armed without ever carrying our argv sentinel. Claiming it on the
+// env alone killed it with a wrong-subsystem exit 97.
+func TestDispatchIgnoresAnEnvArmedProcessWithoutTheSentinel(t *testing.T) {
+	t.Setenv(helperProcessEnv, "1")
+
+	for _, arg := range os.Args {
+		if arg == helperSentinel {
+			t.Skipf("this process really is a credential helper (argv carries %q)", helperSentinel)
+		}
+	}
+
+	code, claimed := Dispatch()
+	if claimed || code != 0 {
+		t.Fatalf("Dispatch() = (%d, %v), want (0, false): the process is env-armed but its argv carries no %q sentinel, "+
+			"so it belongs to whoever re-exec'd it and must fall through to its own TestMain", code, claimed, helperSentinel)
+	}
+}
