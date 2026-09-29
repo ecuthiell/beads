@@ -13,8 +13,8 @@ func TestRepositoryReleaseVersionsMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repository release metadata is inconsistent: %v", err)
 	}
-	if report.CheckedSources != 6 {
-		t.Fatalf("checked sources = %d, want 6", report.CheckedSources)
+	if report.CheckedSources != 12 {
+		t.Fatalf("checked sources = %d, want 12", report.CheckedSources)
 	}
 	hookEntries, err := os.ReadDir(filepath.Join(root, ".githooks"))
 	if err != nil {
@@ -41,42 +41,50 @@ func TestRepositoryReleaseVersionsMatch(t *testing.T) {
 			expectedHookMarkers,
 		)
 	}
-	if len(report.Sources) != 7+expectedHookMarkers {
+	if len(report.Sources) != 13+expectedHookMarkers {
 		t.Fatalf(
-			"reported sources = %d, want %d (six release files, uv.lock, and tracked hook markers)",
+			"reported sources = %d, want %d (twelve release metadata checks, uv.lock, and tracked hook markers)",
 			len(report.Sources),
-			7+expectedHookMarkers,
+			13+expectedHookMarkers,
 		)
 	}
 }
 
 func TestCheckCoversEveryReleaseSource(t *testing.T) {
+	// Keyed by description: winres.json contributes several gated fields from
+	// a single path, so the path alone is no longer a unique key.
 	expected := map[string]string{
-		"integrations/beads-mcp/pyproject.toml":            "MCP pyproject.toml",
-		"integrations/beads-mcp/src/beads_mcp/__init__.py": "MCP __init__.py",
-		"plugins/beads/.claude-plugin/plugin.json":         "Claude plugin.json",
-		"plugins/beads/.codex-plugin/plugin.json":          "Codex plugin.json",
-		".claude-plugin/marketplace.json":                  "Claude marketplace.json",
-		"npm-package/package.json":                         "npm package.json",
+		"MCP pyproject.toml":                    "integrations/beads-mcp/pyproject.toml",
+		"MCP __init__.py":                       "integrations/beads-mcp/src/beads_mcp/__init__.py",
+		"Claude plugin.json":                    "plugins/beads/.claude-plugin/plugin.json",
+		"Codex plugin.json":                     "plugins/beads/.codex-plugin/plugin.json",
+		"Copilot plugin.json":                   "plugins/beads/.copilot-plugin/plugin.json",
+		"Claude marketplace.json":               ".claude-plugin/marketplace.json",
+		"npm package.json":                      "npm-package/package.json",
+		"winres.json file_version":              "cmd/bd/winres/winres.json",
+		"winres.json product_version":           "cmd/bd/winres/winres.json",
+		"winres.json FileVersion":               "cmd/bd/winres/winres.json",
+		"winres.json ProductVersion":            "cmd/bd/winres/winres.json",
+		"manifest.xml assemblyIdentity version": "cmd/bd/winres/manifest.xml",
 	}
 	if len(releaseSources) != len(expected) {
 		t.Fatalf("release source count = %d, want %d", len(releaseSources), len(expected))
 	}
 
 	for _, item := range releaseSources {
-		description, ok := expected[item.path]
+		path, ok := expected[item.description]
 		if !ok {
-			t.Fatalf("unexpected release source %q", item.path)
+			t.Fatalf("unexpected release source %q", item.description)
 		}
-		if item.description != description {
+		if item.path != path {
 			t.Fatalf(
-				"description for %q = %q, want %q",
-				item.path,
+				"path for %q = %q, want %q",
 				item.description,
-				description,
+				item.path,
+				path,
 			)
 		}
-		delete(expected, item.path)
+		delete(expected, item.description)
 
 		t.Run(item.description, func(t *testing.T) {
 			root := writeFixture(t, "1.1.0")
@@ -90,11 +98,19 @@ func TestCheckCoversEveryReleaseSource(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// The Windows surfaces derive a prerelease-stripped or four-part
+			// expectation, so the reported pair follows the source's own rule.
+			wantVersion := "1.1.0"
+			if item.expected != nil {
+				wantVersion = item.expected("1.1.0")
+			}
 			_, err = Check(root)
 			if err == nil {
 				t.Fatal("mismatch unexpectedly passed")
 			}
-			want := item.description + ": 9.9.9 (expected 1.1.0)"
+			want := item.description + ": " +
+				strings.ReplaceAll(wantVersion, "1.1.0", "9.9.9") +
+				" (expected " + wantVersion + ")"
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("error = %q, want %q", err, want)
 			}
@@ -573,7 +589,18 @@ func writeFixtureAt(t *testing.T, root, version string) {
 		"plugins/beads/.codex-plugin/plugin.json":  `{"version":"` + version + `"}`,
 		".claude-plugin/marketplace.json": `{"plugins":[{"version":"` +
 			version + `"}]}`,
-		"npm-package/package.json": `{"version":"` + version + `"}`,
+		"npm-package/package.json":                  `{"version":"` + version + `"}`,
+		"plugins/beads/.copilot-plugin/plugin.json": `{"version":"` + version + `"}`,
+		"cmd/bd/winres/winres.json": `{"RT_VERSION":{"#1":{"0000":{` +
+			`"fixed":{"file_version":"` + baseVersion(version) +
+			`","product_version":"` + baseVersion(version) + `"},` +
+			`"info":{"0409":{"FileVersion":"` + version +
+			`","ProductVersion":"` + version + `"}}}}}}`,
+		"cmd/bd/winres/manifest.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+			"<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n" +
+			"  <assemblyIdentity\n    type=\"win32\"\n    name=\"beads.bd\"\n" +
+			"    version=\"" + assemblyIdentityVersion(version) + "\"\n" +
+			"    processorArchitecture=\"*\"/>\n</assembly>\n",
 		"integrations/beads-mcp/uv.lock": "version = 1\nrevision = 3\n\n" +
 			"[[package]]\nname = \"beads-mcp\"\nversion = \"" +
 			normalizePythonVersion(version) + "\"\n",

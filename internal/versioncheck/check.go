@@ -32,6 +32,11 @@ type source struct {
 	path        string
 	description string
 	read        func(string) (string, error)
+	// expected derives the required value from the canonical version. A nil
+	// expected means the surface must carry the canonical version verbatim;
+	// the Windows PE numeric fields must be purely numeric, so they derive a
+	// prerelease-stripped form instead.
+	expected func(canonical string) string
 }
 
 // SourceResult describes one metadata surface inspected by Check.
@@ -77,7 +82,54 @@ var releaseSources = []source{
 		description: "npm package.json",
 		read:        readTopLevelJSONVersion,
 	},
+	// update-versions.sh bumps this one too, but it was never gated before —
+	// so a drifted copilot manifest (the same drift class that carried stale
+	// .githooks markers through v1.2.0) would silently no-op the bump's
+	// old->new sed, pass this check, pass the pre-push hook and CI, and ship
+	// advertising the previous version.
+	{
+		path:        "plugins/beads/.copilot-plugin/plugin.json",
+		description: "Copilot plugin.json",
+		read:        readTopLevelJSONVersion,
+	},
+	// Windows PE resource metadata. gen-winres.sh re-derives winres.json's
+	// numeric fields from version.go at build time, so those self-heal — but
+	// manifest.xml's <assemblyIdentity> version is embedded verbatim with no
+	// backstop, and update-versions.sh rewrites both with a sed anchored on
+	// the OLD value, so a drifted file is a silent no-op. Gate them.
+	{
+		path:        "cmd/bd/winres/winres.json",
+		description: "winres.json file_version",
+		read:        readWinresVersionField("RT_VERSION", "#1", "0000", "fixed", "file_version"),
+		expected:    baseVersion,
+	},
+	{
+		path:        "cmd/bd/winres/winres.json",
+		description: "winres.json product_version",
+		read:        readWinresVersionField("RT_VERSION", "#1", "0000", "fixed", "product_version"),
+		expected:    baseVersion,
+	},
+	{
+		path:        "cmd/bd/winres/winres.json",
+		description: "winres.json FileVersion",
+		read:        readWinresVersionField("RT_VERSION", "#1", "0000", "info", "0409", "FileVersion"),
+	},
+	{
+		path:        "cmd/bd/winres/winres.json",
+		description: "winres.json ProductVersion",
+		read:        readWinresVersionField("RT_VERSION", "#1", "0000", "info", "0409", "ProductVersion"),
+	},
+	{
+		path:        "cmd/bd/winres/manifest.xml",
+		description: "manifest.xml assemblyIdentity version",
+		read:        readManifestAssemblyVersion,
+		expected:    assemblyIdentityVersion,
+	},
 }
+
+// manifestAssemblyVersionPattern anchors on line start: the XML declaration on
+// line 1 also carries a version="1.0" attribute.
+var manifestAssemblyVersionPattern = regexp.MustCompile(`(?m)^[ \t]*version="([0-9][^"]*)"`)
 
 var trackedHookMarkerPatterns = []struct {
 	name    string
@@ -104,7 +156,7 @@ type Report struct {
 // SuccessMessage formats the stable human-readable success result.
 func (r Report) SuccessMessage() string {
 	return fmt.Sprintf(
-		"Versions match across %d release files, MCP uv.lock, and %d tracked hook markers: %s",
+		"Versions match across %d release metadata checks, MCP uv.lock, and %d tracked hook markers: %s",
 		r.CheckedSources,
 		r.CheckedHookMarkers,
 		r.CanonicalVersion,
@@ -126,24 +178,28 @@ func Check(root string) (Report, error) {
 
 	var problems []string
 	for _, item := range releaseSources {
+		expected := canonical
+		if item.expected != nil {
+			expected = item.expected(canonical)
+		}
 		version, readErr := item.read(filepath.Join(root, filepath.FromSlash(item.path)))
 		result := SourceResult{
 			Description: item.description,
 			Version:     version,
-			Expected:    canonical,
+			Expected:    expected,
 		}
 		switch {
 		case readErr != nil:
 			result.Problem = readErr.Error()
 			problems = append(
 				problems,
-				fmt.Sprintf("%s: %v (expected %s)", item.description, readErr, canonical),
+				fmt.Sprintf("%s: %v (expected %s)", item.description, readErr, expected),
 			)
-		case version != canonical:
+		case version != expected:
 			result.Problem = fmt.Sprintf("version is %s", version)
 			problems = append(
 				problems,
-				fmt.Sprintf("%s: %s (expected %s)", item.description, version, canonical),
+				fmt.Sprintf("%s: %s (expected %s)", item.description, version, expected),
 			)
 		}
 		report.Sources = append(report.Sources, result)
@@ -702,6 +758,63 @@ func findUnescaped(value, needle string, start int) int {
 		}
 		start = index + 1
 	}
+}
+
+// baseVersion strips the prerelease suffix, so 1.1.0-rc.1 becomes 1.1.0. The
+// Windows PE numeric fields must be purely numeric, so they carry this rather
+// than the canonical version.
+func baseVersion(canonical string) string {
+	base, _, _ := strings.Cut(canonical, "-")
+	return base
+}
+
+// assemblyIdentityVersion renders the four-part form manifest.xml embeds.
+func assemblyIdentityVersion(canonical string) string {
+	return baseVersion(canonical) + ".0"
+}
+
+// readWinresVersionField reads one nested string field from winres.json, whose
+// version values sit under a fixed RT_VERSION resource path.
+func readWinresVersionField(keys ...string) func(string) (string, error) {
+	return func(path string) (string, error) {
+		content, err := os.ReadFile(path) //nolint:gosec // callers supply fixed repository-relative paths
+		if err != nil {
+			return "", err
+		}
+		return readNestedUniqueJSONString(content, keys...)
+	}
+}
+
+func readNestedUniqueJSONString(document []byte, keys ...string) (string, error) {
+	current := json.RawMessage(document)
+	for _, key := range keys[:len(keys)-1] {
+		next, err := readUniqueJSONField(current, key)
+		if err != nil {
+			return "", err
+		}
+		current = next
+	}
+	field := keys[len(keys)-1]
+	version, err := readUniqueJSONStringField(current, field)
+	if err != nil {
+		return "", err
+	}
+	if version == "" {
+		return "", fmt.Errorf("non-empty string field .%s not found", strings.Join(keys, "."))
+	}
+	return version, nil
+}
+
+func readManifestAssemblyVersion(path string) (string, error) {
+	content, err := os.ReadFile(path) //nolint:gosec // callers supply fixed repository-relative paths
+	if err != nil {
+		return "", err
+	}
+	match := manifestAssemblyVersionPattern.FindSubmatch(content)
+	if match == nil {
+		return "", fmt.Errorf("no assemblyIdentity version attribute found")
+	}
+	return string(match[1]), nil
 }
 
 func readTopLevelJSONVersion(path string) (string, error) {

@@ -469,6 +469,9 @@ func TestRunBeadsVersionSyncCheck_UVLockFreshness(t *testing.T) {
 func writeBeadsVersionFixture(t *testing.T, version string) string {
 	t.Helper()
 	root := t.TempDir()
+	// The Windows PE numeric fields must be purely numeric, so they carry the
+	// prerelease-stripped form.
+	base, _, _ := strings.Cut(version, "-")
 	files := map[string]string{
 		"go.mod":                                           "module github.com/steveyegge/beads\n\ngo 1.26.5\n",
 		"cmd/bd/version.go":                                "package main\n\nvar Version = \"" + version + "\"\n",
@@ -480,6 +483,14 @@ func writeBeadsVersionFixture(t *testing.T, version string) string {
 		"plugins/beads/.codex-plugin/plugin.json":          `{"version":"` + version + `"}`,
 		".claude-plugin/marketplace.json":                  `{"plugins":[{"version":"` + version + `"}]}`,
 		"npm-package/package.json":                         `{"version":"` + version + `"}`,
+		"plugins/beads/.copilot-plugin/plugin.json":        `{"version":"` + version + `"}`,
+		"cmd/bd/winres/winres.json": `{"RT_VERSION":{"#1":{"0000":{` +
+			`"fixed":{"file_version":"` + base + `","product_version":"` + base + `"},` +
+			`"info":{"0409":{"FileVersion":"` + version +
+			`","ProductVersion":"` + version + `"}}}}}}`,
+		"cmd/bd/winres/manifest.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+			"<assembly>\n  <assemblyIdentity\n    type=\"win32\"\n" +
+			"    version=\"" + base + ".0\"\n    processorArchitecture=\"*\"/>\n</assembly>\n",
 		".githooks/pre-push": "# --- BEGIN BEADS INTEGRATION v" + version + " ---\n" +
 			"body\n# --- END BEADS INTEGRATION v" + version + " ---\n",
 	}
