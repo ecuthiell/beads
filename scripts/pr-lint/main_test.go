@@ -10,9 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
 type recordingRunner struct {
@@ -476,5 +479,65 @@ func TestSelectedGoIsResolvedByLintChild(t *testing.T) {
 	cmd.Env = preferSelectedGo(context.Background(), root, environ, selected, io.Discard, &recordingRunner{goEnvOutput: string(data)})
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("lint child Go discovery: %v\n%s", err, output)
+	}
+}
+
+// TestBuildFlagsContractMatchesShellSource reads .buildflags itself and pins
+// the driver constants to it. TestBuildEnvironmentMatchesBuildFlagsContract
+// pins today's values from the Go side only, so the two files could drift
+// apart silently: buildEnvironment appends its own -tags value and overrides
+// rather than merges, which means a tag added to .buildflags alone would be
+// dropped by the driver with every existing test still green.
+func TestBuildFlagsContractMatchesShellSource(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	repoRoot := filepath.Dir(filepath.Dir(bazeltest.CallerDir(thisFile, "scripts/pr-lint")))
+	path := filepath.Join(repoRoot, ".buildflags")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	source := string(data)
+
+	// export BEADS_BUILD_TAGS="gms_pure_go"
+	tags := regexp.MustCompile(`(?m)^export BEADS_BUILD_TAGS="([^"]*)"$`).FindStringSubmatch(source)
+	if tags == nil {
+		t.Fatalf(".buildflags no longer exports BEADS_BUILD_TAGS in the expected form:\n%s", source)
+	}
+	if tags[1] != beadsBuildTags {
+		t.Errorf("BEADS_BUILD_TAGS drift: .buildflags has %q, driver constant beadsBuildTags is %q; "+
+			"buildEnvironment overrides rather than merges -tags, so the shell value would be silently dropped",
+			tags[1], beadsBuildTags)
+	}
+
+	// : "${CGO_ENABLED:=1}"
+	cgo := regexp.MustCompile(`(?m)^: "\$\{CGO_ENABLED:=([^}]*)\}"$`).FindStringSubmatch(source)
+	if cgo == nil {
+		t.Fatalf(".buildflags no longer defaults CGO_ENABLED in the expected form:\n%s", source)
+	}
+	if got, _ := environmentValue(buildEnvironment([]string{"CGO_ENABLED="}, false), "CGO_ENABLED", false); got != cgo[1] {
+		t.Errorf("CGO_ENABLED default drift: .buildflags defaults to %q, buildEnvironment defaults to %q", cgo[1], got)
+	}
+
+	// if [[ "${GOFLAGS:-}" != *gms_pure_go* ]]; then
+	guard := regexp.MustCompile(`(?m)^if \[\[ "\$\{GOFLAGS:-\}" != \*([^*]*)\* \]\]; then$`).FindStringSubmatch(source)
+	if guard == nil {
+		t.Fatalf(".buildflags no longer guards GOFLAGS in the expected form:\n%s", source)
+	}
+	if guard[1] != beadsBuildTags {
+		t.Errorf("GOFLAGS guard drift: .buildflags skips its append when GOFLAGS contains %q, "+
+			"driver skips on %q; the two must test the same token or one appends when the other does not",
+			guard[1], beadsBuildTags)
+	}
+	// The shell guard is a substring match (*tag*), and buildEnvironment uses
+	// strings.Contains for the same reason. Pin that agreement: making only the
+	// Go side stricter would append a tag the wrapper had already decided was
+	// present.
+	preset := []string{"GOFLAGS=-tags=" + guard[1] + "_x"}
+	if got, _ := environmentValue(buildEnvironment(preset, false), "GOFLAGS", false); got != preset[0][len("GOFLAGS="):] {
+		t.Errorf("GOFLAGS guard is no longer the substring test .buildflags performs: got %q, want %q",
+			got, preset[0][len("GOFLAGS="):])
 	}
 }

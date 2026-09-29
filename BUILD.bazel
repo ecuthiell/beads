@@ -10,7 +10,10 @@ gazelle(name = "gazelle")
 
 exports_files(
     [".buildflags"],
-    visibility = ["//scripts/prlintmake:__pkg__"],
+    visibility = [
+        "//scripts/pr-lint:__pkg__",
+        "//scripts/prlintmake:__pkg__",
+    ],
 )
 
 exports_files([

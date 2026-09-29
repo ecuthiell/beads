@@ -16,5 +16,7 @@ go_binary(
 go_test(
     name = "pr-lint_test",
     srcs = ["main_test.go"],
+    data = ["//:.buildflags"],
     embed = [":pr-lint_lib"],
+    deps = ["//internal/testutil/bazeltest"],
 )

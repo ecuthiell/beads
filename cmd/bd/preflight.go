@@ -27,6 +27,13 @@ type CheckResult struct {
 	Warning bool   `json:"warning,omitempty"`
 	Output  string `json:"output,omitempty"`
 	Command string `json:"command"`
+	// Dir is the directory Command was resolved and run in. The --check probes
+	// do not all share one scope: lint and format run at the repository root
+	// while tests run in the caller's working directory, so a run started from
+	// a subdirectory mixes a repo-wide verdict with a subtree-only one.
+	// Reporting the directory keeps the two distinguishable and makes the
+	// reported command reproducible from somewhere other than the root.
+	Dir string `json:"dir,omitempty"`
 }
 
 // PreflightResult represents the overall preflight check results.
@@ -62,6 +69,12 @@ Examples:
 }
 
 const beadsPRLintDriverCommand = "go run -mod=readonly -tags=gms_pure_go ./scripts/pr-lint"
+
+// lintCancellationGrace bounds how long Wait keeps reading the output pipe
+// after the lint deadline fires. Descendants of the driver can hold the write
+// end open indefinitely, so this is what turns the deadline into a real bound
+// on the call rather than only on the direct child.
+const lintCancellationGrace = 10 * time.Second
 
 func init() {
 	preflightCmd.Flags().Bool("check", false, "Run checks automatically")
@@ -279,6 +292,9 @@ func runChecks(jsonOutput, skipLint bool) error {
 			fmt.Printf("✗ %s\n", r.Name)
 		}
 		fmt.Printf("  Command: %s\n", r.Command)
+		if r.Dir != "" {
+			fmt.Printf("  Directory: %s\n", r.Dir)
+		}
 		if r.Skipped && r.Output != "" {
 			fmt.Printf("  Reason: %s\n", r.Output)
 		} else if r.Warning && r.Output != "" {
@@ -300,17 +316,26 @@ func runChecks(jsonOutput, skipLint bool) error {
 	return nil
 }
 
-// runTestCheck runs go test -short ./... and returns the result.
+// runTestCheck runs go test -short ./... and returns the result. Unlike the
+// lint and format checks it is deliberately left in the caller's working
+// directory, so ./... stays the subtree the caller asked about; the reported
+// Dir is what keeps that narrower scope visible beside the rooted checks.
 func runTestCheck() CheckResult {
 	command := "go test -tags gms_pure_go -short ./..."
 	cmd := exec.Command("go", "test", "-tags", "gms_pure_go", "-short", "./...")
 	output, err := cmd.CombinedOutput()
+
+	dir, err2 := os.Getwd()
+	if err2 != nil {
+		dir = "."
+	}
 
 	return CheckResult{
 		Name:    "Tests pass",
 		Passed:  err == nil,
 		Output:  string(output),
 		Command: command,
+		Dir:     dir,
 	}
 }
 
@@ -338,6 +363,7 @@ func runLintCheckAt(root string, skipLint bool) CheckResult {
 			Warning: true,
 			Output:  "lint check explicitly skipped by --skip-lint",
 			Command: invocation.display,
+			Dir:     invocation.dir,
 		}
 	}
 
@@ -347,6 +373,7 @@ func runLintCheckAt(root string, skipLint bool) CheckResult {
 			Passed:  false,
 			Output:  fmt.Sprintf("%s not found in PATH (install it or rerun with --skip-lint)", invocation.executable),
 			Command: invocation.display,
+			Dir:     invocation.dir,
 		}
 	}
 
@@ -356,8 +383,17 @@ func runLintCheckAt(root string, skipLint bool) CheckResult {
 	// it does not provide process-tree ownership: descendants may outlive it.
 	cmd := exec.CommandContext(ctx, invocation.executable, invocation.args...)
 	cmd.Dir = invocation.dir
+	// CombinedOutput collects through a pipe that every descendant inherits, so
+	// killing the direct child on deadline does not close the write end while a
+	// golangci-lint grandchild still holds it. Without a WaitDelay the deadline
+	// therefore cannot bound this call at all, and the message appended below
+	// never prints in the one case it exists to report.
+	cmd.WaitDelay = lintCancellationGrace
 	output, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	// Report the deadline only when it actually decided the result: a child that
+	// wins the race exits cleanly just as the context expires, and that is a
+	// pass, not a timeout.
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		output = append(output, []byte(fmt.Sprintf("\nlint check exceeded %s", invocation.timeout))...)
 	}
 
@@ -366,6 +402,7 @@ func runLintCheckAt(root string, skipLint bool) CheckResult {
 		Passed:  err == nil,
 		Output:  string(output),
 		Command: invocation.display,
+		Dir:     invocation.dir,
 	}
 }
 
@@ -414,6 +451,7 @@ func runFmtCheckAt(root string) CheckResult {
 			Passed:  false,
 			Output:  "gofmt not found in PATH (install Go toolchain)",
 			Command: command,
+			Dir:     root,
 		}
 	}
 
@@ -427,6 +465,7 @@ func runFmtCheckAt(root string) CheckResult {
 			Passed:  false,
 			Output:  string(output),
 			Command: command,
+			Dir:     root,
 		}
 	}
 
@@ -437,6 +476,7 @@ func runFmtCheckAt(root string) CheckResult {
 			Passed:  false,
 			Output:  fmt.Sprintf("Unformatted files:\n%s\nRun: gofmt -w .", unformatted),
 			Command: command,
+			Dir:     root,
 		}
 	}
 
@@ -444,6 +484,7 @@ func runFmtCheckAt(root string) CheckResult {
 		Name:    "Formatting",
 		Passed:  true,
 		Command: command,
+		Dir:     root,
 	}
 }
 
