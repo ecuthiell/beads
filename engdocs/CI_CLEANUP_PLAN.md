@@ -1,6 +1,6 @@
 # CI Cleanup Plan
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-09-03
 
 Freshness source: `engdocs/CI_TEST_SURFACE_AUDIT.md`, `.github/workflows/*.yml`,
 `.buildflags`, `.golangci.yml`, `scripts/ci/pr-lint.sh`, `scripts/pr-lint/`,
@@ -170,12 +170,15 @@ easy to identify and rerun. It includes:
   downloads, a five-minute timeout, and the `gms_pure_go` build tag.
 - A second non-CGO Windows cross-lint pass when the native target does not
   already cover that build tuple.
+- A third non-CGO darwin (arm64) cross-lint pass under the same rule. Both
+  cross-lints are compile-only passes on the Linux runner; they add no macOS or
+  Windows runner and do not change the platform column above.
 
-The two lint passes and their target selection are owned by the
+All three lint passes and their target selection are owned by the
 checkout-local `scripts/pr-lint` Go driver. The Bash wrapper retains formatting,
 direct invocation, and aggregate timing without duplicating that policy.
 
-Both passes are SCOPED BY LANE. On a PR the wrapper takes
+All three passes are SCOPED BY LANE. On a PR the wrapper takes
 `BD_LINT_NEW_FROM_MERGE_BASE` and reports only the findings that PR introduces,
 matching the `only-new-issues` setting on the sibling `lint` job; on a push to
 `main`, and for anyone running `make ci-pr-lint` by hand, it is unset and the
@@ -771,7 +774,7 @@ artifacts, so `postinstall` URLs are populated before the package is published.
    where practical so branch-protection migration can be handled separately.
 10. Add stable aggregate required-check candidates after the split.
     Initial aggregate jobs exist on branch `ci/bd-am3.1-wrapper-commands` as
-    `PR / CI Gate / Required` and `PR Risk / CI Gate / Required`, backed by
+    `PR / CI Gate / Required` and `PR Risk / PR Risk Gate / Required`, backed by
     `.github/scripts/ci-gate.sh`.
 
 ## Deferred Decisions

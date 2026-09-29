@@ -117,6 +117,16 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 		"GOOS":        "windows",
 		"GOWORK":      "off",
 	}, runtime.GOOS == "windows")
+	// Files guarded by //go:build darwin (and the !windows && !linux fallbacks)
+	// are invisible to the Linux runner too, so a darwin-only finding must fail
+	// the PR here instead of on the next maintainer's laptop.
+	skipDarwin := native.GOOS == "darwin" && native.CGOEnabled == "0"
+	darwinEnv := setEnvironment(effectiveEnv, map[string]string{
+		"CGO_ENABLED": "0",
+		"GOARCH":      "arm64",
+		"GOOS":        "darwin",
+		"GOWORK":      "off",
+	}, runtime.GOOS == "windows")
 	nativeEnv := effectiveEnv
 	if runtime.GOOS == "windows" {
 		nativeEnv = preferSelectedGo(probeCtx, dir, effectiveEnv, native, stderr, runner)
@@ -126,6 +136,12 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 			selected, code := readNativeGoEnvironment(probeCtx, dir, windowsEnv, goPath, stderr, runner)
 			if code == 0 {
 				windowsEnv = preferSelectedGo(probeCtx, dir, windowsEnv, selected, stderr, runner)
+			}
+		}
+		if !skipDarwin {
+			selected, code := readNativeGoEnvironment(probeCtx, dir, darwinEnv, goPath, stderr, runner)
+			if code == 0 {
+				darwinEnv = preferSelectedGo(probeCtx, dir, darwinEnv, selected, stderr, runner)
 			}
 		}
 	}
@@ -142,12 +158,24 @@ func run(args []string, dir string, environ []string, stdout, stderr io.Writer, 
 
 	if skipWindows {
 		fmt.Fprintln(stdout, "==> golangci-lint (windows/amd64, non-CGO) already covered by native pass")
+	} else if code := runLintPass(
+		"golangci-lint (windows/amd64, non-CGO)",
+		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: windowsEnv},
+		stdout,
+		stderr,
+		runner,
+	); code != 0 {
+		return code
+	}
+
+	if skipDarwin {
+		fmt.Fprintln(stdout, "==> golangci-lint (darwin/arm64, non-CGO) already covered by native pass")
 		return 0
 	}
 
 	return runLintPass(
-		"golangci-lint (windows/amd64, non-CGO)",
-		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: windowsEnv},
+		"golangci-lint (darwin/arm64, non-CGO)",
+		commandSpec{name: lintPath, args: argsForLint, dir: dir, env: darwinEnv},
 		stdout,
 		stderr,
 		runner,

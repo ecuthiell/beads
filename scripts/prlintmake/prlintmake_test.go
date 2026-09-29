@@ -72,8 +72,8 @@ func TestPRLintWrapperDelegatesPolicyToCheckoutGoDriver(t *testing.T) {
 			t.Fatalf("driver environment missing %q:\n%s", want, run.goEnvironment)
 		}
 	}
-	if !strings.Contains(run.output, "==> golangci-lint (native + windows/non-CGO)") ||
-		!strings.Contains(run.output, "<== golangci-lint (native + windows/non-CGO) succeeded") {
+	if !strings.Contains(run.output, "==> golangci-lint (native + windows/darwin non-CGO)") ||
+		!strings.Contains(run.output, "<== golangci-lint (native + windows/darwin non-CGO) succeeded") {
 		t.Fatalf("aggregate lint timing is not attributable:\n%s", run.output)
 	}
 }

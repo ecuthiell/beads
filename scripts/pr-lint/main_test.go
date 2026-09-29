@@ -66,7 +66,7 @@ func (err syntheticExitError) ExitCode() int {
 	return err.code
 }
 
-func TestRunUsesCanonicalNativeAndWindowsPasses(t *testing.T) {
+func TestRunUsesCanonicalNativeAndCrossTargetPasses(t *testing.T) {
 	runner := &recordingRunner{
 		paths: map[string]string{
 			"go":            "/tools/go",
@@ -87,7 +87,8 @@ func TestRunUsesCanonicalNativeAndWindowsPasses(t *testing.T) {
 	}
 	wantProbes := 1
 	if runtime.GOOS == "windows" {
-		wantProbes = 2
+		// One native probe plus one per cross-target pass.
+		wantProbes = 3
 	}
 	if len(runner.outputCommands) != wantProbes {
 		t.Fatalf("go env calls = %d, want %d", len(runner.outputCommands), wantProbes)
@@ -96,8 +97,8 @@ func TestRunUsesCanonicalNativeAndWindowsPasses(t *testing.T) {
 	if got := runner.outputCommands[0].args; !reflect.DeepEqual(got, wantGoArgs) {
 		t.Fatalf("go env args = %#v, want %#v", got, wantGoArgs)
 	}
-	if len(runner.runCommands) != 2 {
-		t.Fatalf("lint calls = %d, want 2", len(runner.runCommands))
+	if len(runner.runCommands) != 3 {
+		t.Fatalf("lint calls = %d, want 3", len(runner.runCommands))
 	}
 	wantLintArgs := []string{
 		"run",
@@ -126,9 +127,14 @@ func TestRunUsesCanonicalNativeAndWindowsPasses(t *testing.T) {
 	assertEnvironmentValue(t, runner.runCommands[1].env, "GOARCH", "amd64", false)
 	assertEnvironmentValue(t, runner.runCommands[1].env, "CGO_ENABLED", "0", false)
 	assertEnvironmentValue(t, runner.runCommands[1].env, "GOWORK", "off", false)
+	assertEnvironmentValue(t, runner.runCommands[2].env, "GOOS", "darwin", false)
+	assertEnvironmentValue(t, runner.runCommands[2].env, "GOARCH", "arm64", false)
+	assertEnvironmentValue(t, runner.runCommands[2].env, "CGO_ENABLED", "0", false)
+	assertEnvironmentValue(t, runner.runCommands[2].env, "GOWORK", "off", false)
 	for _, heading := range []string{
 		"==> golangci-lint (native)",
 		"==> golangci-lint (windows/amd64, non-CGO)",
+		"==> golangci-lint (darwin/arm64, non-CGO)",
 	} {
 		if !strings.Contains(stdout.String(), heading) {
 			t.Fatalf("missing lane heading %q in output:\n%s", heading, stdout.String())
@@ -169,10 +175,39 @@ func TestRunSkipsDuplicateNativeWindowsNonCGOPass(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	if len(runner.runCommands) != 1 {
-		t.Fatalf("lint calls = %d, want 1", len(runner.runCommands))
+	// The native pass already covers windows/non-CGO, so only the native and
+	// darwin cross-target passes remain.
+	if len(runner.runCommands) != 2 {
+		t.Fatalf("lint calls = %d, want 2", len(runner.runCommands))
 	}
-	if !strings.Contains(stdout.String(), "already covered by native pass") {
+	assertEnvironmentValue(t, runner.runCommands[1].env, "GOOS", "darwin", false)
+	if !strings.Contains(stdout.String(), "==> golangci-lint (windows/amd64, non-CGO) already covered by native pass") {
+		t.Fatalf("missing duplicate-pass diagnostic:\n%s", stdout.String())
+	}
+}
+
+func TestRunSkipsDuplicateNativeDarwinNonCGOPass(t *testing.T) {
+	runner := &recordingRunner{
+		paths: map[string]string{
+			"go":            "go",
+			"golangci-lint": "golangci-lint",
+		},
+		goEnvOutput: `{"GOOS":"darwin","CGO_ENABLED":"0"}`,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run(nil, "/repo", []string{"CGO_ENABLED=0"}, &stdout, &stderr, runner)
+	if code != 0 {
+		t.Fatalf("run exit = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	// The native pass already covers darwin/non-CGO, so only the native and
+	// windows cross-target passes remain.
+	if len(runner.runCommands) != 2 {
+		t.Fatalf("lint calls = %d, want 2", len(runner.runCommands))
+	}
+	assertEnvironmentValue(t, runner.runCommands[1].env, "GOOS", "windows", false)
+	if !strings.Contains(stdout.String(), "==> golangci-lint (darwin/arm64, non-CGO) already covered by native pass") {
 		t.Fatalf("missing duplicate-pass diagnostic:\n%s", stdout.String())
 	}
 }
@@ -223,8 +258,8 @@ func TestRunParsesGoEnvStdoutWhenSuccessfulCommandWarnsOnStderr(t *testing.T) {
 	if strings.Contains(stderr.String(), "parse native Go target") {
 		t.Fatalf("go env stderr corrupted stdout JSON parsing: %q", stderr.String())
 	}
-	if len(runner.runCommands) != 1 {
-		t.Fatalf("lint calls = %d, want one native Windows/non-CGO pass", len(runner.runCommands))
+	if len(runner.runCommands) != 2 {
+		t.Fatalf("lint calls = %d, want the native Windows/non-CGO pass plus the darwin cross-lint", len(runner.runCommands))
 	}
 }
 

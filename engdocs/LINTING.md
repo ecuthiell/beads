@@ -42,11 +42,14 @@ The wrapper runs:
   `.golangci.yml`, readonly module downloads, a five-minute timeout, the
   `gms_pure_go` build tag, and `--new-from-merge-base` when
   `BD_LINT_NEW_FROM_MERGE_BASE` names a ref, then runs the same scope for the
-  non-CGO Windows target when the native host does not already cover it.
+  non-CGO Windows target and the non-CGO darwin (arm64) target when the native
+  host does not already cover them, so `//go:build windows && !cgo` and
+  `//go:build darwin` files are linted from the Linux runner.
 
 The shell wrapper records one aggregate timing for the Go lint driver. The
-driver prints a heading and result for each native or Windows pass so failures
-remain attributable without duplicating target-selection policy in Bash.
+driver prints a heading and result for each native or cross-target pass so
+failures remain attributable without duplicating target-selection policy in
+Bash.
 
 The shared driver owns the lint passes used by `scripts/ci/pr-lint.sh` and
 Beads-source `bd preflight`. The standalone workflow lint action and pre-commit
