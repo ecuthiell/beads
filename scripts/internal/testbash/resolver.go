@@ -47,8 +47,9 @@ func Resolve() (string, error) {
 }
 
 // Probe verifies a caller-specific Bash capability under an environment
-// derived from the supplied entries. Bash startup, option, and
-// exported-function controls are removed before the probe runs.
+// derived from the supplied entries. Bash and Git authority controls are
+// removed before the probe runs: Bash startup, option, and exported-function
+// controls, and GIT_EXEC_PATH.
 // The script must produce no stdout or stderr and must not exit the shell,
 // even with status zero: successful probes must reach the sentinel epilogue.
 func Probe(path, capability, script string, environment []string) error {
@@ -70,11 +71,21 @@ exit "$beads_testbash_probe_status"
 	if err != nil {
 		return fmt.Errorf("%s probe: %w: %s", capability, err, strings.TrimSpace(string(output)))
 	}
-	if string(output) != probeSuccess {
+	if rendered := string(output); rendered != probeSuccess {
+		// The body did reach the sentinel epilogue but wrote something first;
+		// reporting that as "sentinel not reached" misdirects the reader, whose
+		// own quoted payload visibly contains the sentinel.
+		if strings.HasSuffix(rendered, probeSuccess) {
+			return fmt.Errorf(
+				"%s probe completed but wrote unexpected output before the execution sentinel: %q",
+				capability,
+				strings.TrimSuffix(rendered, probeSuccess),
+			)
+		}
 		return fmt.Errorf(
 			"%s probe exited successfully without the exact execution sentinel: %q",
 			capability,
-			string(output),
+			rendered,
 		)
 	}
 	return nil

@@ -26,13 +26,26 @@ func TestSanitizedEnvironmentRemovesBashAuthorityControls(t *testing.T) {
 	overrides = append(overrides, "BEADS_TEST_SAFE=override")
 
 	environment := sanitizedEnvironment(os.Environ(), overrides...)
+
+	// The oracle is the controls literal above, never isBashAuthorityControl:
+	// re-calling the predicate under test lets the filter and the oracle weaken
+	// in lockstep, so the assertion could not fail for any definition of it.
+	poisoned := make(map[string]struct{}, len(controls))
+	for _, key := range controls {
+		poisoned[environmentKey(key)] = struct{}{}
+	}
+	exportedFunctionPrefix := environmentKey("BASH_FUNC_")
 	for _, entry := range environment {
 		key, _, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
-		if isBashAuthorityControl(environmentKey(key)) {
+		normalizedKey := environmentKey(key)
+		if _, control := poisoned[normalizedKey]; control {
 			t.Fatalf("sanitized environment retained Bash authority control %q", key)
+		}
+		if strings.HasPrefix(normalizedKey, exportedFunctionPrefix) {
+			t.Fatalf("sanitized environment retained exported-function control %q", key)
 		}
 	}
 	if !containsEnvironmentEntry(environment, "BEADS_TEST_SAFE=override") {
