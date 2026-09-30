@@ -12,14 +12,14 @@ Refs [#5703](https://github.com/gastownhall/beads/issues/5703) and
 | Can this store expose a local database directory? | Captured locality and directory capability for the active database. | Permission to perform destructive maintenance or control its server lifecycle. |
 | May external GC operate on that database now? | The chosen policy's ownership, liveness, coordination, and compatibility evidence. | A general permission to manage other databases or terminate a server. |
 
-At source snapshot `4dc96f6f`, `resolveLocalActiveDatabaseDir` in
+At source snapshot `25a54a73`, `resolveLocalActiveDatabaseDir` in
 `internal/storage/dolt/store.go` supplies a captured path for advisory sizing.
 It excludes several external-routing cases, but its shared-mode path does not
 prove ownership or liveness. `sharedServerDatabase` uses a stronger live-ownership
 proof for schema migration; that does not automatically make it the GC contract.
 
-The pending [#6327](https://github.com/gastownhall/beads/pull/6327) implementation
-at `b13abee0` introduces `ExternalGCLocator` for the active database's GC path.
+The [#6327](https://github.com/gastownhall/beads/pull/6327) change landed in
+`8269a88c`, introducing `ExternalGCLocator` for the active database's GC path.
 Correctly identifying that directory fixes target selection. It does not settle
 the broader destructive-maintenance policy raised in the [adoption review](https://github.com/gastownhall/beads/pull/6327#issuecomment-5877102997).
 The recorded live-server GC succeeded for the tested PATH binary; that result is
@@ -69,7 +69,8 @@ or where ownership evidence no longer names the live server, defeats that propos
 environment-port/lifecycle work; ambient routing can coexist with an owned server.
 Coordinate predicate changes through #6123 and executable changes through #5703.
 Interruption remains a separate choice in [#6918](https://github.com/gastownhall/beads/issues/6918).
-Preserve the [#5668](https://github.com/gastownhall/beads/pull/5668)/#6327 paired-landing
-hold and contributor ownership. This note changes neither directory authority,
+PR #6327 has landed while [#5668](https://github.com/gastownhall/beads/pull/5668)
+remains open. Preserve contributor ownership and review partial reverts together.
+This note changes neither directory authority,
 runtime commands, timeouts, nor the storage/driver boundary; implementation awaits
 agreement on a concrete policy and its compatibility evidence.
