@@ -5,9 +5,9 @@ Refs [#6918](https://github.com/gastownhall/beads/issues/6918).
 
 ## Existing boundary
 
-At source snapshot `4dc96f6f`, `runCompactDolt` in `cmd/bd/compact.go` launches
+At source snapshot `25a54a73`, `runCompactDolt` in `cmd/bd/compact.go` launches
 external `dolt gc` with `exec.Command`, including the plain-GC fallback.
-Pending [#6327](https://github.com/gastownhall/beads/pull/6327) (`b13abee0`) checks
+Landed [#6327](https://github.com/gastownhall/beads/pull/6327) (`8269a88c`) checks
 context cancellation during directory resolution; its collectors still use `exec.Command`.
 Canceling that Go context therefore does not itself cancel a running collector.
 This does not make GC uninterruptible: terminal signals, process termination,
@@ -69,7 +69,7 @@ Decide text/JSON and exit behavior together, including a completed first attempt
 whose fallback is refused; this note selects none of those public responses.
 
 Directory authority, existing mode/read-only gates, fallback classification, and
-advisory sizing remain unchanged. The [#5668](https://github.com/gastownhall/beads/pull/5668)/#6327
-paired-landing hold also remains: land the parent then child together as directed,
-or integrate the child with its parent ancestry; review partial reverts as a pair.
+advisory sizing remain unchanged. PR #6327 has landed while
+[#5668](https://github.com/gastownhall/beads/pull/5668) remains open. Preserve the
+paired changes' contributor attribution and review partial reverts together.
 Maintainer agreement on the supported choices and evidence precedes a runtime fix.
