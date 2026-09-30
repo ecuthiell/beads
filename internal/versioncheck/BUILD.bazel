@@ -14,5 +14,7 @@ go_library(
 go_test(
     name = "versioncheck_test",
     srcs = ["check_test.go"],
+    data = ["//:release_metadata_files"],
     embed = [":versioncheck"],
+    deps = ["//internal/testutil/bazeltest"],
 )

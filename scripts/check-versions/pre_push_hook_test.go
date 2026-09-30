@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
 // The repository hook must keep ordinary pushes working under macOS's system
@@ -22,11 +24,7 @@ func TestPrePushHookOrdinaryPushWorksWithSystemBash(t *testing.T) {
 		t.Skipf("system Bash unavailable: %v", err)
 	}
 
-	workingDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	repoRoot := filepath.Clean(filepath.Join(workingDir, "..", ".."))
+	repoRoot := bazeltest.RepoRoot(t)
 	hook := filepath.Join(repoRoot, ".githooks", "pre-push")
 
 	command := exec.Command(bash, hook, "origin", "https://example.invalid/repo.git")
@@ -42,6 +40,14 @@ func TestPrePushHookOrdinaryPushWorksWithSystemBash(t *testing.T) {
 
 	// Keep the shell entrypoint's status contract covered on the oldest Bash,
 	// alongside the ordinary-push compatibility that brought us here.
+	//
+	// Unlike the ordinary push above, the entrypoint builds the Go checker from
+	// source at the repository root, so it needs a full module checkout there.
+	// Under Bazel the tree the test sees is its runfiles, which holds only the
+	// declared data and no go.mod, so the wrapper could only ever report its
+	// build failure (127); `go test` runs against the real checkout. The guard
+	// sits inside each subtest, not above the loop, so that the ordinary-push
+	// assertion above still reports as run rather than hiding behind a skip.
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -52,6 +58,9 @@ func TestPrePushHookOrdinaryPushWorksWithSystemBash(t *testing.T) {
 		{"version mismatch", []string{"--expect", "0.0.0-checker-test"}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if bazeltest.IsBazel() {
+				t.Skip("entrypoint builds from source: needs the real module checkout, not runfiles")
+			}
 			scratch := t.TempDir()
 			t.Setenv("TMPDIR", scratch)
 			checker := filepath.Join(repoRoot, "scripts", "check-versions.sh")

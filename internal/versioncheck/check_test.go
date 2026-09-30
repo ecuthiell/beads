@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/testutil/bazeltest"
 )
 
 func TestRepositoryReleaseVersionsMatch(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := bazeltest.RepoRoot(t)
 	report, err := Check(root)
 	if err != nil {
 		t.Fatalf("repository release metadata is inconsistent: %v", err)

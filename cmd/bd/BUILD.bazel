@@ -1421,6 +1421,18 @@ exports_files(
     visibility = ["//test/docsync:__pkg__"],
 )
 
+# Release-metadata surfaces gated by //internal/versioncheck's releaseSources
+# table: the canonical version and the Windows PE resource files. Aggregated
+# into //:release_metadata_files, which is what the tests declare as data.
+exports_files(
+    [
+        "version.go",
+        "winres/manifest.xml",
+        "winres/winres.json",
+    ],
+    visibility = ["//:__pkg__"],
+)
+
 # --- begin go_srcs (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
 
 filegroup(
