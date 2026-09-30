@@ -158,9 +158,9 @@ The implementation and existing characterization tests are in
 [`internal/git/gitdir_test.go`](../internal/git/gitdir_test.go). Broader discovery
 and write authority remain with [#6786](https://github.com/gastownhall/beads/issues/6786)
 and its proposal [#6796](https://github.com/gastownhall/beads/pull/6796); this section
-does not settle that proposal or supersede the pending hook consumers in
-[#6440](https://github.com/gastownhall/beads/pull/6440),
-[#6463](https://github.com/gastownhall/beads/pull/6463), and
+does not settle that proposal or supersede hook-consumer ownership in
+[#6440](https://github.com/gastownhall/beads/pull/6440) or the merged
+[#6463](https://github.com/gastownhall/beads/pull/6463) and
 [#6464](https://github.com/gastownhall/beads/pull/6464).
 
 ## Security
