@@ -104,6 +104,7 @@ for version in "${SELECTED_VERSIONS[@]}"; do
 done
 
 candidate=$(build_candidate) || exit $?
+# Refusal policy lives in build_candidate; the lines below only canonicalise its path.
 candidate=$(resolve_existing_path "$candidate") || die 'candidate binary cannot be resolved'
 [ -x "$candidate" ] || die "candidate binary is not executable: $candidate"
 

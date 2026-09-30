@@ -194,15 +194,33 @@ func TestSmokeCandidateEntrypointOrdering(t *testing.T) {
 	}
 	baseEnv := shellPathEnv()
 	root := shellPathUnderEnv(t, bash, sourceRepoRoot(t), baseEnv)
-	for _, tc := range []struct {
+	type entrypointCase struct {
 		name, script, override string
+		args, resolveOnly      []string
 		wantExit               int
-	}{
-		{"upgrade invalid", "upgrade-smoke-test.sh", "missing", 2},
-		{"cross invalid", "cross-version-smoke-test.sh", "missing", 2},
-		{"upgrade download failure automatic", "upgrade-smoke-test.sh", "", 1},
-		{"upgrade download failure prebuilt", "upgrade-smoke-test.sh", "prebuilt", 1},
-	} {
+	}
+	cases := []entrypointCase{
+		{"upgrade invalid", "upgrade-smoke-test.sh", "missing", []string{"v0.62.0"}, nil, 2},
+		{"cross invalid", "cross-version-smoke-test.sh", "missing", []string{"v0.62.0"}, nil, 2},
+		{"upgrade download failure automatic", "upgrade-smoke-test.sh", "", []string{"v0.62.0"}, nil, 1},
+		{"upgrade download failure prebuilt", "upgrade-smoke-test.sh", "prebuilt", []string{"v0.62.0"}, nil, 1},
+	}
+	// The historical harness exits 1 before selecting a candidate unless its
+	// catalog gets bash >= 4 (macOS ships 3.2 as /bin/bash) and the host is on
+	// its pinned linux/amd64 or darwin/arm64 corpus; probe both under this bash.
+	guards := exec.Command(bash, "--noprofile", "--norc", "-c",
+		`((BASH_VERSINFO[0] >= 4)) && case "$(uname -s)-$(uname -m)" in Linux-x86_64|Darwin-arm64) ;; *) exit 1 ;; esac`)
+	guards.Env = baseEnv
+	if guards.Run() == nil {
+		// It takes --version, and its preamble resolves more commands than the
+		// other entrypoints do: those are injected as tripwires too, so the
+		// refusal must precede every one of them. A SQLite release is chosen
+		// because the server-Dolt and wisp-plane tags would execute the pinned
+		// Dolt runtime before the candidate is selected.
+		cases = append(cases, entrypointCase{"historical invalid", "migration-test/historical-dolt-upgrade-test.sh", "missing",
+			[]string{"--version", "v0.9.1"}, []string{"jq", "timeout", "sha256sum", "python3"}, 2})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			bin, home := filepath.Join(dir, "tools"), filepath.Join(dir, "home")
@@ -212,7 +230,7 @@ func TestSmokeCandidateEntrypointOrdering(t *testing.T) {
 				}
 			}
 			const forbidden = "#!/usr/bin/env bash\nprintf '%s\\n' \"$0 $*\" >> \"$BEADS_CANDIDATE_FORBIDDEN\"\nexit 97\n"
-			tools := []string{"curl", "wget", "go", "git", "dolt"}
+			tools := append([]string{"curl", "wget", "go", "git", "dolt"}, tc.resolveOnly...)
 			for _, tool := range tools {
 				if err := os.WriteFile(filepath.Join(bin, tool), []byte(forbidden), 0755); err != nil {
 					t.Fatal(err)
@@ -254,10 +272,11 @@ func TestSmokeCandidateEntrypointOrdering(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			// An explicit version reaches download if the caller loses its refusal guard.
-			cmd := exec.CommandContext(ctx, bash, "--noprofile", "--norc", "-c", `
+			shellArgs := append([]string{"--noprofile", "--norc", "-c", `
 PATH="$BEADS_TEST_COMMAND_PATH"; export PATH
-exec "$BASH" --noprofile --norc "$1" v0.62.0
-`, "candidate-entrypoint", root+"/scripts/"+tc.script)
+exec "$BASH" --noprofile --norc "$@"
+`, "candidate-entrypoint", root + "/scripts/" + tc.script}, tc.args...)
+			cmd := exec.CommandContext(ctx, bash, shellArgs...)
 			cmd.Dir, cmd.Env = dir, env
 			out, err := cmd.CombinedOutput()
 			if ctx.Err() != nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != tc.wantExit {
