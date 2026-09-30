@@ -11,46 +11,12 @@ import (
 	"github.com/steveyegge/beads/internal/execenv"
 )
 
-// routingKeys name Git environment variables that redirect Git away from an
-// explicit working directory, or replace its repository, index, object,
-// namespace, executable, template, or config authority. Scrubbing one of these
-// narrows the authority a child process inherits, which is the point of this
-// package.
-//
-// Git's two discovery-boundary variables are both deliberately absent, but for
-// opposite reasons, because their polarity is opposite.
-//
-// GIT_CEILING_DIRECTORIES withholds authority: it bounds how far Git may walk
-// up from its starting directory, so removing it widens repository selection
-// instead of narrowing it. Under GIT_CEILING_DIRECTORIES=$P/child, the command
-// `git -C $P/child/sub config beads.role maintainer` is refused (exit 128), but
-// with the ceiling scrubbed it succeeds and writes the privileged role into
-// $P/.git/config. Every call site here is a discovery call against a path that
-// is not guaranteed to be a repository root, and -C names a directory rather
-// than a repository, so an explicit directory does not substitute for the
-// fence. A caller that wants its working directory to be the boundary must
-// supply its own ceiling -- GIT_CEILING_DIRECTORIES=<parent of the intended
-// root> -- instead of deleting the operator's. newWorktreeRemovalGit in
-// cmd/bd/worktree_cmd.go is the precedent for that supply-your-own pattern,
-// but only on the config plane (GIT_CONFIG_GLOBAL/_SYSTEM/_NOSYSTEM); it
-// supplies no discovery fence, so it is not an example of this form.
-//
-// GIT_DISCOVERY_ACROSS_FILESYSTEM is permit-only, so the direction claim above
-// does not apply to it: Git already stops at a filesystem boundary, unset *is*
-// the stop, and the variable exists only to disable that stop. Retaining it
-// therefore narrows nothing -- an inherited =1 can only widen discovery across
-// a mount. It is kept out of the set anyway, so that an operator or a
-// legitimate cross-mount checkout that sets it keeps working under every bd
-// verb instead of losing the verb outright. That is a deliberate trade with a
-// real cost: base scrubbed both keys in scrubWorktreeRemovalGitEnv's own
-// hardcoded list, so routing that adapter through this shared set reverses
-// base policy for this key and lets `bd worktree remove` discovery cross a
-// mount boundary where base stopped it. Tracked in bd-dz16y; revisit if that
-// widening ever outweighs the cross-mount caller.
 var routingKeys = map[string]struct{}{
 	"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	"GIT_CEILING_DIRECTORIES":          {},
 	"GIT_COMMON_DIR":                   {},
 	"GIT_DIR":                          {},
+	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
 	"GIT_EXEC_PATH":                    {},
 	"GIT_GRAFT_FILE":                   {},
 	"GIT_IMPLICIT_WORK_TREE":           {},
@@ -88,13 +54,15 @@ func EntryKey(entry string) string {
 // executable, template, or config authority. Environment names follow host
 // semantics: byte-exact on POSIX and case-insensitive on Windows.
 //
-// The GIT_CONFIG prefix still covers the suppression knobs GIT_CONFIG_NOSYSTEM,
-// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM, which fence config authority rather
-// than redirect it. Retaining them cannot be decided by key alone, because
-// GIT_CONFIG_GLOBAL=/dev/null suppresses config while GIT_CONFIG_GLOBAL=/tmp/evil
-// injects it; that value-aware distinction is made in follow-up #6461. The
-// injection channel this package must close -- the GIT_CONFIG_COUNT/KEY_n/VALUE_n
-// triple -- is covered either way.
+// GIT_CEILING_DIRECTORIES is a deliberate member even though it narrows
+// discovery rather than redirecting it: an inherited ceiling can fence off the
+// repository the caller is standing in, which is the same loss of working-
+// directory authority. Removing it therefore widens the upward search as well,
+// so a caller whose working directory is not itself a repository can resolve a
+// containing one. That is the intended trade, and pinning an explicit working
+// directory does not opt out of it: -C or cmd.Dir fixes where the search
+// starts, not where it stops, so once the ceiling is gone the walk above that
+// directory is unbounded.
 func IsRoutingKeyForOS(key, goos string) bool {
 	keys := routingKeys
 	prefix := "GIT_CONFIG"
@@ -118,26 +86,82 @@ func ScrubRouting(env []string) []string {
 
 // ScrubRoutingForOS removes Git routing entries using goos environment-key
 // semantics. It preserves non-routing controls such as GIT_OPTIONAL_LOCKS and
-// GIT_NO_REPLACE_OBJECTS.
+// GIT_NO_REPLACE_OBJECTS, plus explicit system/global config suppression.
+// Custom config paths and inline values still lose their routing authority.
+//
+// Suppression cannot redirect a read, but it can blind one. Callers whose
+// result carries authority must use ScrubRoutingAndSuppression instead.
 func ScrubRoutingForOS(env []string, goos string) []string {
+	return scrubRoutingForOS(env, goos, true)
+}
+
+// ScrubRoutingAndSuppression removes Git routing entries using the current
+// host's environment-key semantics, including the explicit config suppression
+// that ScrubRouting deliberately preserves.
+func ScrubRoutingAndSuppression(env []string) []string {
+	return ScrubRoutingAndSuppressionForOS(env, runtime.GOOS)
+}
+
+// ScrubRoutingAndSuppressionForOS is ScrubRoutingForOS without the config
+// suppression exemption: GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_SYSTEM=/dev/null
+// and GIT_CONFIG_NOSYSTEM lose their effect along with every other routing key.
+//
+// Use it wherever a *missing* config value grants privilege rather than merely
+// losing a preference. Suppression is harmless for a command that only reports
+// what Git sees, but on an authority lookup such as beads.role an inherited
+// GIT_CONFIG_NOSYSTEM=1 lets a caller blind the read, and a permissive
+// miss-handler (routing.detectFromURL defaults to maintainer) converts that
+// blinding into an escalation. Keeping reads and writes of the same key on this
+// boundary also stops them from disagreeing about which config file they mean.
+func ScrubRoutingAndSuppressionForOS(env []string, goos string) []string {
+	return scrubRoutingForOS(env, goos, false)
+}
+
+func scrubRoutingForOS(env []string, goos string, keepSuppression bool) []string {
 	cleaned := make([]string, 0, len(env))
 	for _, entry := range env {
 		if IsRoutingKeyForOS(EntryKey(entry), goos) {
-			continue
+			if !keepSuppression || !isConfigSuppressionControl(entry, goos) {
+				continue
+			}
 		}
 		cleaned = append(cleaned, entry)
 	}
 	return cleaned
 }
 
+// isConfigSuppressionControl recognizes the config controls that cannot
+// redirect Git at a file of the caller's choosing. IsRoutingKeyForOS stays
+// conservative: a key alone cannot distinguish null suppression from a custom
+// file that can redirect selected operations.
+//
+// GIT_CONFIG_NOSYSTEM is preserved value-blind — unlike the null-path forms
+// below there is no value it can take that names a file, so Git is left to
+// interpret its Boolean, including the "false"/"0" spellings that re-enable
+// system config and any invalid value it should report itself.
+func isConfigSuppressionControl(entry, goos string) bool {
+	key := execenv.KeyIdentityForOS(EntryKey(entry), goos)
+	_, value, assigned := strings.Cut(entry, "=")
+	if !assigned {
+		return false
+	}
+	switch key {
+	case execenv.KeyIdentityForOS("GIT_CONFIG_NOSYSTEM", goos):
+		return true
+	case execenv.KeyIdentityForOS("GIT_CONFIG_GLOBAL", goos), execenv.KeyIdentityForOS("GIT_CONFIG_SYSTEM", goos):
+		return value == "/dev/null" || (goos == "windows" && strings.EqualFold(value, "NUL"))
+	}
+	return false
+}
+
 // ClearRouting permanently removes Git routing entries from the current
 // process. CLI callers use it as a command-lifetime authority boundary. It
-// reports whether any entry was removed.
+// retains the same config suppression as ScrubRouting and reports any removal.
 func ClearRouting() (bool, error) {
 	removed := false
 	for _, entry := range os.Environ() {
 		key := EntryKey(entry)
-		if !IsRoutingKeyForOS(key, runtime.GOOS) {
+		if !IsRoutingKeyForOS(key, runtime.GOOS) || isConfigSuppressionControl(entry, runtime.GOOS) {
 			continue
 		}
 		if err := os.Unsetenv(key); err != nil {

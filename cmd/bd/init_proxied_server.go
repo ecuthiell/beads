@@ -96,7 +96,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 		return fmt.Errorf("failed to get current directory: %v", err)
 	}
 
-	fsProvider := fs.NewFileSystemProvider(cwd, newBeadsDirTemplates(), newFileSystemAdapters())
+	fsProvider := fs.NewFileSystemProvider(cwd, newBeadsDirTemplates(), newInitFileSystemAdapters(cwd))
 	fsUseCase := fsProvider.BeadsDirFSUseCase()
 	gitUC := git.NewGitProvider(cwd).GitUseCase()
 
@@ -526,13 +526,16 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 	gitUC := t.gitUC
 	if t.workDir != "" {
 		// Only the selected tail uses this scope; earlier bootstrap keeps its provider.
+		// NewInitGitRepository runs `git rev-parse --git-dir` with Dir=workDir and
+		// scrubbed routing, so dropping discovery ceilings can select a containing
+		// parent repository, matching the role adapter's scrubbed reads and writes.
 		gitUC = domain.NewGitUseCase(t.workDir, domaingit.NewInitGitRepository(t.workDir))
 	}
+	// One probe answers both the role gate and the artifact gates: gitUC is the
+	// scrubbed selected-directory repository whenever workDir is set, and the
+	// supplied use case otherwise, so a separate role probe could only repeat it.
 	isRepo := gitUC.IsGitRepo(ctx)
 
-	// gitUC is bound to the selected workDir with a scrubbed environment, so its
-	// probe already answers for the role branch: a second identical rev-parse
-	// only doubled the subprocess.
 	if isRepo {
 		role := in.roleFlag
 		if role == "" {
@@ -572,33 +575,41 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		}
 	}
 
-	if !in.skipHooks && (!hooksInstalled() || hooksNeedUpdate()) {
-		if hooksInstalled() && !in.quiet {
-			fmt.Printf("  Updating hooks to version %s...\n", Version)
-		}
+	if !in.skipHooks {
 		isJJ := gitUC.IsJujutsuRepo(ctx)
 		isColocated := gitUC.IsColocatedJJGit(ctx)
 		switch {
 		case isJJ && !isColocated:
-			if !in.quiet {
+			// The install arm below took over the hook-status gate that used to
+			// wrap this whole switch. Keep it here too, or a pure-JJ repo with
+			// current hooks starts re-printing the alias hint on every init.
+			if !in.quiet && (!hooksInstalled() || hooksNeedUpdate()) {
 				printJJAliasInstructions()
 			}
-		case isColocated:
-			if err := t.fsUseCase.InstallJJHooks(ctx); err != nil && !in.quiet {
-				fmt.Fprintf(os.Stderr, "\n%s Failed to install jj hooks: %v\n", ui.RenderWarn("⚠"), err)
-			} else if !in.quiet {
-				fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
-			}
-		default:
-			if isRepo {
-				hooksParams := domain.HooksInstallParams{
-					HookNames:  managedHookNames,
-					BeadsHooks: true,
+		case isColocated || isRepo:
+			// Resolve only an eligible Git branch, never skip/pure-JJ/nonrepo paths.
+			hookFS, hooks, err := withInitHooks(t.fsUseCase, t.workDir, t.beadsDir)
+			if err != nil {
+				if !in.quiet {
+					fmt.Fprintf(os.Stderr, "\n%s Failed to resolve git hooks: %v\n", ui.RenderWarn("⚠"), err)
 				}
-				if err := t.fsUseCase.InstallGitHooks(ctx, hooksParams); err != nil && !in.quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
-				} else if !in.quiet {
-					fmt.Printf("  Hooks installed to: .beads/hooks/\n")
+			} else if !hooks.installed() || hooks.needsUpdate() {
+				if hooks.installed() && !in.quiet {
+					fmt.Printf("  Updating hooks to version %s...\n", Version)
+				}
+				if isColocated {
+					if err := hookFS.InstallJJHooks(ctx); err != nil && !in.quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to install jj hooks: %v\n", ui.RenderWarn("⚠"), err)
+					} else if !in.quiet {
+						fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
+					}
+				} else {
+					hooksParams := domain.HooksInstallParams{HookNames: managedHookNames, BeadsHooks: true}
+					if err := hookFS.InstallGitHooks(ctx, hooksParams); err != nil && !in.quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
+					} else if !in.quiet {
+						fmt.Printf("  Hooks installed to: .beads/hooks/\n")
+					}
 				}
 			}
 		}

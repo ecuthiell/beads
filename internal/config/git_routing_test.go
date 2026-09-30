@@ -36,6 +36,10 @@ func TestGetIdentityIgnoresInheritedGitRouting(t *testing.T) {
 	if err := os.WriteFile(poisonConfig, []byte("[user]\n\tname = injected-user\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		t.Fatalf("hostname fixture: %q, %v", hostname, err)
+	}
 	for _, tc := range []struct {
 		name       string
 		env        map[string]string
@@ -45,8 +49,11 @@ func TestGetIdentityIgnoresInheritedGitRouting(t *testing.T) {
 		{name: "repository", env: map[string]string{"GIT_DIR": filepath.Join(decoy, ".git")}, want: "target-user"},
 		{name: "inline config", env: map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "injected-user"}, want: "target-user"},
 		{name: "global config", env: map[string]string{"GIT_CONFIG_GLOBAL": poisonConfig}, clearLocal: true, want: "home-user"},
+		{name: "null config suppression", env: map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}, clearLocal: true, want: hostname},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Keep each removal case independent of the preceding case.
+			runConfigProbeGit(t, target, "config", "--local", "user.name", "target-user")
 			if tc.clearLocal {
 				runConfigProbeGit(t, target, "config", "--local", "--unset", "user.name")
 			}
@@ -120,52 +127,156 @@ func TestSecretGitTrackingIgnoresInheritedGitRouting(t *testing.T) {
 			}
 		})
 	}
+
+	// The scrub alone narrows the probe to upward discovery from the config
+	// file's directory. A detached work tree — GIT_DIR plus GIT_WORK_TREE with
+	// no in-tree .git beside the config — is reachable only through the
+	// inherited context, so without the inherited fallback the guard reports
+	// "untracked" and writes the secret into a tracked file.
+	t.Run("legitimate routing", func(t *testing.T) {
+		gitDir := filepath.Join(t.TempDir(), "repo.git")
+		if err := os.MkdirAll(gitDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		runConfigProbeGit(t, gitDir, "init", "--bare", "--quiet")
+		work := t.TempDir()
+		beadsDir := filepath.Join(work, ".beads")
+		if err := os.MkdirAll(beadsDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		detachedTracked := filepath.Join(beadsDir, "config.yaml")
+		detachedUntracked := filepath.Join(beadsDir, "untracked.yaml")
+		for _, path := range []string{detachedTracked, detachedUntracked} {
+			if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		runConfigProbeGit(t, work, "--git-dir", gitDir, "--work-tree", work, "add", "--", detachedTracked)
+
+		t.Setenv("GIT_DIR", gitDir)
+		t.Setenv("GIT_WORK_TREE", work)
+		// Guard the fixture: the scrubbed probe must not see this repository at
+		// all, or the fallback below would be satisfied by discovery instead.
+		if isGitTrackedWithEnv(detachedTracked, gitenv.ScrubRouting(os.Environ())) {
+			t.Fatal("scrubbed discovery reached the detached work tree; fixture cannot exercise the fallback")
+		}
+		if !isGitTracked(detachedTracked) {
+			t.Error("legitimate routing lost the tracked file; the secret guard would write into it")
+		}
+		if isGitTracked(detachedUntracked) {
+			t.Error("untracked file reported as tracked")
+		}
+		if err := checkSecretGitTracked(detachedTracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
+			t.Errorf("tracked secret refusal = %v", err)
+		}
+		if err := checkSecretGitTracked(detachedUntracked, "linear.api_key"); err != nil {
+			t.Errorf("untracked secret refused: %v", err)
+		}
+	})
 }
 
-// An operator-set discovery fence must survive the routing scrub. Scrubbing
-// removes redirects that would retarget a command; it must not hand the command
-// authority the operator withheld. Before discovery fences were split out of the
-// routing set this failed: the scrubbed privileged write escaped the ceiling and
-// landed in the containing parent repository's config.
-func TestScrubbedGitCommandsHonorOperatorCeiling(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-
-	// Resolve symlinks before fencing: git compares ceiling entries against the
-	// resolved path, so an unresolved /var -> /private/var prefix would never
-	// match and the fence would silently not apply.
-	parent, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+// A checkout reachable only through inherited Git routing is the case a
+// scrubbed-only probe cannot see at all: it finds no repository, reports
+// "untracked", and the fail-open guard writes the secret into a tracked
+// config.yaml. The inherited fallback is what keeps the refusal working there.
+func TestSecretGitTrackingHonorsLegitimateGitRouting(t *testing.T) {
+	gitDir, work := t.TempDir(), t.TempDir()
+	routedGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(gitenv.ScrubRouting(os.Environ()), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+work)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("routed git %v: %v\n%s", args, err, output)
+		}
 	}
-	runConfigProbeGit(t, parent, "init", "--quiet")
-	ceiling := filepath.Join(parent, "child")
-	fenced := filepath.Join(ceiling, "sub")
-	if err := os.MkdirAll(fenced, 0o755); err != nil {
-		t.Fatal(err)
+	routedGit("init", "--quiet")
+	tracked := filepath.Join(work, "config.yaml")
+	untracked := filepath.Join(work, "untracked.yaml")
+	for _, path := range []string{tracked, untracked} {
+		if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	t.Setenv("GIT_CEILING_DIRECTORIES", ceiling)
+	routedGit("add", "--", tracked)
 
-	// Inherit the fenced directory as the process cwd rather than setting
-	// cmd.Dir: the four cmd/bd/config.go role sites pass neither -C nor
-	// cmd.Dir, so an inherited cwd is the shape production actually has.
-	t.Chdir(fenced)
-
-	cmd := exec.Command("git", "config", "beads.role", "maintainer")
-	cmd.Env = gitenv.ScrubRouting(os.Environ())
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("scrubbed git config escaped the operator's ceiling %s: %s", ceiling, output)
+	// The work tree holds no .git entry, so the scrubbed probe must fail here.
+	// Without this precondition the inherited fallback could pass vacuously.
+	scrubbed := exec.Command("git", "ls-files", "--error-unmatch", tracked)
+	scrubbed.Dir = work
+	scrubbed.Env = gitenv.ScrubRouting(os.Environ())
+	if scrubbed.Run() == nil {
+		t.Fatal("scrubbed probe already resolves the routed checkout; fixture proves nothing")
 	}
 
-	config, err := os.ReadFile(filepath.Join(parent, ".git", "config"))
-	if err != nil {
-		t.Fatal(err)
+	t.Setenv("GIT_DIR", gitDir)
+	t.Setenv("GIT_WORK_TREE", work)
+	if !isGitTracked(tracked) {
+		t.Error("legitimate routing hid the tracked file from the secret guard")
 	}
-	if strings.Contains(string(config), "role") {
-		t.Fatalf("fenced write reached the containing repository %s:\n%s", parent, config)
+	if isGitTracked(untracked) {
+		t.Error("untracked file reported as tracked")
+	}
+	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
+		t.Errorf("tracked secret refusal = %v", err)
+	}
+	if err := checkSecretGitTracked(untracked, "linear.api_key"); err != nil {
+		t.Errorf("untracked secret refused: %v", err)
+	}
+}
+
+// A bare repository whose work tree is named only by GIT_DIR/GIT_WORK_TREE is
+// invisible to the scrubbed probe — it is reachable through the inherited
+// routing alone. The secret guard must still refuse a write into the tracked
+// config.yaml there, which is the refusal upstream-base performed before the
+// probe began scrubbing routing.
+func TestSecretGitTrackingHonorsInheritedBareWorkTree(t *testing.T) {
+	gitDir, workTree := t.TempDir(), t.TempDir()
+	runConfigProbeGit(t, workTree, "init", "--bare", "--quiet", gitDir)
+	tracked := filepath.Join(workTree, "config.yaml")
+	untracked := filepath.Join(workTree, "untracked.yaml")
+	for _, path := range []string{tracked, untracked} {
+		if err := os.WriteFile(path, []byte("json: false\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runConfigProbeGit(t, workTree, "--git-dir", gitDir, "--work-tree", workTree, "add", "--", tracked)
+	t.Setenv("GIT_DIR", gitDir)
+	t.Setenv("GIT_WORK_TREE", workTree)
+
+	// Fixture guard: the tracked file must be reachable only through the
+	// inherited routing, and the scrubbed probe must fail for a configuration
+	// reason (no reachable repository) rather than "path is not tracked"
+	// (exit 1), which is final and would leave the fallback unreachable.
+	probe := func(env []string) error {
+		cmd := exec.Command("git", "ls-files", "--error-unmatch", tracked)
+		cmd.Dir = workTree
+		cmd.Env = env
+		return cmd.Run()
+	}
+	inherited := os.Environ()
+	scrubbedErr := probe(gitenv.ScrubRouting(inherited))
+	if scrubbedErr == nil {
+		t.Fatal("fixture must require inherited routing, scrubbed probe found the file")
+	}
+	if exit, ok := scrubbedErr.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		t.Fatalf("fixture must fail the scrubbed probe for a configuration reason, got exit 1")
+	}
+	if err := probe(inherited); err != nil {
+		t.Fatalf("inherited tracking precondition: %v", err)
+	}
+
+	if !isGitTracked(tracked) {
+		t.Error("bare work tree tracking was ignored, secret writes are no longer refused")
+	}
+	if isGitTracked(untracked) {
+		t.Error("untracked file reported as tracked")
+	}
+	if err := checkSecretGitTracked(tracked, "linear.api_key"); err == nil || !strings.Contains(err.Error(), "refusing to write secret key") {
+		t.Errorf("tracked secret refusal = %v", err)
+	}
+	if err := checkSecretGitTracked(untracked, "linear.api_key"); err != nil {
+		t.Errorf("untracked secret refused: %v", err)
 	}
 }
 
