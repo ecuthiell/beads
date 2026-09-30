@@ -49,7 +49,7 @@ func TestPrePushHookOrdinaryPushWorksWithSystemBash(t *testing.T) {
 	}{
 		{"unknown option", []string{"--unknown"}, 2},
 		{"positional argument", []string{"unexpected"}, 2},
-		{"version mismatch", []string{"--expect", "0.0.0-checker-test"}, 1},
+		{"version mismatch", []string{"--expect", "0.0.0-checker-test"}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scratch := t.TempDir()

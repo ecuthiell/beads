@@ -38,6 +38,10 @@ if [ "$pushing_version_tag" -eq 1 ]; then
                         if [ "$checker_status" -eq 1 ]; then
                             echo "❌ Refusing to push release tag v$tag_version: versions are inconsistent." >&2
                             echo "   Fix with: scripts/update-versions.sh <version>" >&2
+                        elif [ "$checker_status" -eq 3 ]; then
+                            echo "❌ Refusing to push release tag v$tag_version: the tag does not match this checkout's release version." >&2
+                            echo "   The release surfaces agree with each other, so do NOT re-run update-versions.sh." >&2
+                            echo "   Push only the tag matching this checkout (see CONTRIBUTING.md)." >&2
                         else
                             echo "❌ Refusing to push release tag v$tag_version: version checker unavailable or failed (exit $checker_status)." >&2
                             echo "   Check the Go toolchain and checker diagnostics above." >&2

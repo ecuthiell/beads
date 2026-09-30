@@ -92,7 +92,10 @@ func run(
 			report.CanonicalVersion,
 			expected.value,
 		)
-		return 1
+		// Distinct from status 1: the release surfaces agree with each other,
+		// only the required version differs. Callers such as the release-tag
+		// pre-push hook must not answer this with the version-drift remedy.
+		return 3
 	}
 	if checkUVLock != nil {
 		available, checkErr := checkUVLock(root)
@@ -109,11 +112,15 @@ func run(
 	}
 	fmt.Fprintf(
 		stdout,
-		"\n%s✓ Version files and released-docs policy pass for: %s%s\n",
+		"\n%s✓ Version files in sync at: %s%s\n",
 		green,
 		report.CanonicalVersion,
 		reset,
 	)
+	// The checker reads no documentation surface, so it must not imply one.
+	fmt.Fprintln(stdout, "  (Version files only — this script does not check docs. The docs")
+	fmt.Fprintln(stdout, "   release line and docs/cli-docs.pin are manual release steps; see")
+	fmt.Fprintln(stdout, "   RELEASING.md.)")
 	return 0
 }
 

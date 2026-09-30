@@ -24,6 +24,6 @@ if ! go build -tags=gms_pure_go -o "$checker" ./scripts/check-versions; then
     echo "Release version checker unavailable: Go could not build it." >&2
     exit 127
 fi
-# Running the binary preserves usage status 2 and validation status 1; go run
-# collapses both to 1 and adds its own diagnostic.
+# Running the binary preserves usage status 2, validation status 1 and --expect
+# mismatch status 3; go run collapses them to 1 and adds its own diagnostic.
 "$checker" "$@"

@@ -25,12 +25,12 @@ func TestRunExpectedVersionContract(t *testing.T) {
 			name:       "aligned version",
 			args:       []string{"--expect", "1.1.0"},
 			wantCode:   0,
-			wantStdout: "✓ Version files and released-docs policy pass for: 1.1.0",
+			wantStdout: "✓ Version files in sync at: 1.1.0",
 		},
 		{
 			name:       "mismatched version",
 			args:       []string{"--expect", "9.9.9"},
-			wantCode:   1,
+			wantCode:   3,
 			wantStdout: "Canonical version (from version.go): 1.1.0",
 			wantStderr: "Canonical release version 1.1.0 does not match required version 9.9.9",
 		},
@@ -138,7 +138,7 @@ func TestRunPreservesOptionalUVLockFreshnessCheck(t *testing.T) {
 			}
 			if test.wantCode != 0 && strings.Contains(
 				stdout.String(),
-				"Version files and released-docs policy pass",
+				"Version files in sync at:",
 			) {
 				t.Fatal("stale uv.lock emitted a success result")
 			}
@@ -177,7 +177,7 @@ func TestRunRejectsTrackedHookMarkerMismatch(t *testing.T) {
 	) {
 		t.Fatalf("stderr = %q, want tracked-hook mismatch summary", stderr.String())
 	}
-	if strings.Contains(stdout.String(), "Version files and released-docs policy pass") {
+	if strings.Contains(stdout.String(), "Version files in sync at:") {
 		t.Fatal("tracked-hook mismatch emitted a success result")
 	}
 }
