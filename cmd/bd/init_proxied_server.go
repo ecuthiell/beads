@@ -191,6 +191,9 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 
 	remoteURL := resolveProxiedInitRemoteURL(ctx, cwd, in)
 
+	// Unlike the origin lookup above, ComputeRepoID and GetCloneID still inherit
+	// Git routing: under an inherited GIT_DIR/GIT_WORK_TREE, repo_id and clone_id
+	// can describe a different repository than remoteURL, or fail to resolve.
 	var repoID, cloneID string
 	if id, err := beads.ComputeRepoID(); err == nil {
 		repoID = id
