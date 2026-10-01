@@ -127,7 +127,10 @@ func runPRLintWrapper(t *testing.T, goBody string) prLintWrapperRun {
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeShellExecutable(t, bash, filepath.Join(shimDir, "gofmt"), "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+	// fmt-check.sh ignores a PATH gofmt (be-gx8), so the gofmt shim goes in
+	// through GOFMT, as in runFmtCheck. Only the go shim needs to be on PATH.
+	gofmt := filepath.Join(testRoot, "gofmt")
+	writeShellExecutable(t, bash, gofmt, "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 	writeShellExecutable(t, bash, filepath.Join(shimDir, "go"), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >"$GO_ARGS_MARKER"
@@ -159,6 +162,7 @@ printf 'BD_LINT_NEW_FROM_MERGE_BASE=%s\n' "${BD_LINT_NEW_FROM_MERGE_BASE-}" >>"$
 		"CGO_ENABLED":                 "",
 		"ENV":                         "",
 		"GOFLAGS":                     "-mod=readonly",
+		"GOFMT":                       shellVisiblePath(gofmt),
 		"GO_ARGS_MARKER":              shellVisiblePath(argsMarker),
 		"GO_ENV_MARKER":               shellVisiblePath(envMarker),
 		"LANG":                        "C",
