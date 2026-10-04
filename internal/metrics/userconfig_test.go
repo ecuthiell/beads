@@ -206,7 +206,9 @@ func TestEnsureUserConfigDefaults_UnsafeRootsFailBeforeMutation(t *testing.T) {
 	t.Chdir(sentinel)
 	t.Setenv("HOME", "~")
 	t.Setenv("USERPROFILE", "~")
-	t.Setenv("home", "~")
+	if runtime.GOOS != "windows" {
+		t.Setenv("home", "~")
+	}
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 	t.Setenv("XDG_CONFIG_HOME", "relative-xdg")

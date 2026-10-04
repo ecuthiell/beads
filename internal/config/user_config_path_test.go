@@ -31,7 +31,9 @@ func TestUserHomeValidationSourceForOS(t *testing.T) {
 func TestUserConfigYamlPathNamesNativeEnvironmentSource(t *testing.T) {
 	t.Setenv("HOME", "~")
 	t.Setenv("USERPROFILE", "~")
-	t.Setenv("home", "~")
+	if runtime.GOOS != "windows" {
+		t.Setenv("home", "~")
+	}
 	t.Setenv("APPDATA", "relative-appdata")
 	for _, xdg := range []string{"relative-xdg", ""} {
 		name := "XDG configured"
@@ -118,6 +120,7 @@ func TestUserConfigYamlCandidatesShareDiagnosticGrammar(t *testing.T) {
 			wantNative: "native user config directory (" + nativeSource + ") \"relative \\\"native\\\"\" is not an absolute native path",
 		},
 		{
+			// The home source is fixed per OS; native resolver errors carry their own source.
 			name:       "resolver errors",
 			homeErr:    homeResolutionErr,
 			nativeErr:  nativeResolutionErr,
@@ -269,7 +272,9 @@ func TestRelativeUserRootsNeverReachImplicitOrExplicitFilesystemPaths(t *testing
 	t.Chdir(sentinel)
 	t.Setenv("HOME", "~")
 	t.Setenv("USERPROFILE", "~")
-	t.Setenv("home", "~")
+	if runtime.GOOS != "windows" {
+		t.Setenv("home", "~")
+	}
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 	t.Setenv("XDG_CONFIG_HOME", "relative-xdg")
