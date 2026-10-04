@@ -83,9 +83,6 @@ func TestContextRoutesNameOneWorkspaceTheSameWay(t *testing.T) {
 			}
 			t.Chdir(dir)
 			t.Setenv("BEADS_DIR", beadsDir)
-			// git caches the cwd's repository context process-wide; a test
-			// that ran earlier from a non-repo directory would otherwise make
-			// this fresh repo look like "not a git repository".
 			resetRepoCachesForTest(t)
 
 			provider, err := contextinfo.NewContextProvider(dir, Version).ContextUseCase().GetContextInfo(t.Context())

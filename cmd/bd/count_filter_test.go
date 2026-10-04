@@ -38,6 +38,44 @@ func TestCountIncludeInfraFlagShape(t *testing.T) {
 	}
 }
 
+// TestCountIncludeEphemeralFlagShape is the same pin for --include-ephemeral,
+// plus the case TestParseCountRequestCarriesEveryFilterFlag cannot see because
+// it sets both plane flags at once: --include-ephemeral ALONE must not reach
+// the role as IncludeInfra, which would also drop templates and gates from
+// the count.
+func TestCountIncludeEphemeralFlagShape(t *testing.T) {
+	flag := countCmd.Flags().Lookup("include-ephemeral")
+	if flag == nil {
+		t.Fatal("bd count must expose an --include-ephemeral flag")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("--include-ephemeral must default to false, got %q", flag.DefValue)
+	}
+
+	request, _, err := parseCountRequest(newCountFlagSet(t))
+	if err != nil {
+		t.Fatalf("parseCountRequest with no flags set: %v", err)
+	}
+	if request.IncludeEphemeral {
+		t.Error("IncludeEphemeral = true with no flags set, want the durable-only default")
+	}
+
+	flags := newCountFlagSet(t)
+	if err := flags.Flags().Set("include-ephemeral", "true"); err != nil {
+		t.Fatalf("set --include-ephemeral: %v", err)
+	}
+	request, _, err = parseCountRequest(flags)
+	if err != nil {
+		t.Fatalf("parseCountRequest --include-ephemeral: %v", err)
+	}
+	if !request.IncludeEphemeral {
+		t.Error("IncludeEphemeral = false with --include-ephemeral set; the flag was dropped on the way into the request")
+	}
+	if request.IncludeInfra {
+		t.Error("IncludeInfra = true with only --include-ephemeral set; it is the plane bit and nothing else")
+	}
+}
+
 // TestParseCountRequestCarriesEveryFilterFlag is the tripwire for a flag that
 // is registered, documented and silently dropped on the way into the request.
 // Every filter flag is set to a value distinguishable from its zero and read
@@ -70,6 +108,7 @@ func TestParseCountRequestCarriesEveryFilterFlag(t *testing.T) {
 		"priority-min":      "0",
 		"priority-max":      "4",
 		"include-infra":     "true",
+		"include-ephemeral": "true",
 	} {
 		if err := flags.Flags().Set(flag, value); err != nil {
 			t.Fatalf("set --%s=%s: %v", flag, value, err)
@@ -96,31 +135,32 @@ func TestParseCountRequestCarriesEveryFilterFlag(t *testing.T) {
 	}
 	priority, min, max := 1, 0, 4
 	want := issueops.CountRequest{
-		Status:         "closed",
-		IssueType:      "bug",
-		Assignee:       "alice",
-		Priority:       &priority,
-		PriorityMin:    &min,
-		PriorityMax:    &max,
-		Labels:         []string{"alpha", "beta"},
-		LabelsAny:      []string{"gamma"},
-		TitleSearch:    "needle",
-		IDFilter:       "bd-1,bd-2",
-		TitleContains:  "tc",
-		DescContains:   "dc",
-		NotesContains:  "nc",
-		CreatedAfter:   day(1),
-		CreatedBefore:  day(2),
-		UpdatedAfter:   day(3),
-		UpdatedBefore:  day(4),
-		ClosedAfter:    day(5),
-		ClosedBefore:   day(6),
-		EmptyDesc:      true,
-		NoAssignee:     true,
-		NoLabels:       true,
-		MetadataFields: map[string]string{"team": "platform"},
-		HasMetadataKey: "audit_ref",
-		IncludeInfra:   true,
+		Status:           "closed",
+		IssueType:        "bug",
+		Assignee:         "alice",
+		Priority:         &priority,
+		PriorityMin:      &min,
+		PriorityMax:      &max,
+		Labels:           []string{"alpha", "beta"},
+		LabelsAny:        []string{"gamma"},
+		TitleSearch:      "needle",
+		IDFilter:         "bd-1,bd-2",
+		TitleContains:    "tc",
+		DescContains:     "dc",
+		NotesContains:    "nc",
+		CreatedAfter:     day(1),
+		CreatedBefore:    day(2),
+		UpdatedAfter:     day(3),
+		UpdatedBefore:    day(4),
+		ClosedAfter:      day(5),
+		ClosedBefore:     day(6),
+		EmptyDesc:        true,
+		NoAssignee:       true,
+		NoLabels:         true,
+		MetadataFields:   map[string]string{"team": "platform"},
+		HasMetadataKey:   "audit_ref",
+		IncludeInfra:     true,
+		IncludeEphemeral: true,
 	}
 	if !reflect.DeepEqual(request, want) {
 		t.Errorf("parseCountRequest built\n %#v\nwant\n %#v", request, want)
