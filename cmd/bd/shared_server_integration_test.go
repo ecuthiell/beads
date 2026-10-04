@@ -602,17 +602,13 @@ var (
 func buildSharedServerTestBinary(t *testing.T) string {
 	t.Helper()
 	sharedServerBuildOnce.Do(func() {
-		if prebuilt := os.Getenv("BEADS_TEST_BD_BINARY"); prebuilt != "" {
-			if _, err := os.Stat(prebuilt); err != nil {
-				sharedServerBuildErr = fmt.Errorf("BEADS_TEST_BD_BINARY=%q not found: %w", prebuilt, err)
-				return
-			}
-			sharedServerBdBinary = prebuilt
+		prebuilt, err := findPrebuiltBDBinary()
+		if err != nil {
+			sharedServerBuildErr = err
 			return
 		}
-		pkgDir, err := os.Getwd()
-		if err != nil {
-			sharedServerBuildErr = fmt.Errorf("getwd: %w", err)
+		if prebuilt != "" {
+			sharedServerBdBinary = prebuilt
 			return
 		}
 		buildDir, err := testTempDir("beads-shared-server-bd-*")
@@ -621,8 +617,7 @@ func buildSharedServerTestBinary(t *testing.T) string {
 			return
 		}
 		bdBin := filepath.Join(buildDir, "bd")
-		cmd := exec.Command("go", "build", "-tags", "gms_pure_go", "-o", bdBin, ".")
-		cmd.Dir = pkgDir
+		cmd := goBuildBDCommand(bdBin)
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
