@@ -124,6 +124,87 @@ func TestProxiedInitGitBootstrapUsesSelectedProject(t *testing.T) {
 	}
 }
 
+// Serial: changes the process working directory, environment, and loaded config.
+func TestRunInitProxiedServerGitBootstrap(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key := gitenv.EntryKey(entry)
+		if gitenv.IsRoutingKeyForOS(key, runtime.GOOS) {
+			t.Setenv(key, "")
+			require.NoError(t, os.Unsetenv(key))
+		}
+	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, name := range []string{"fresh_decoy", "blocked_decoy", "canceled", "explicit_storage"} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+				t.Setenv(key, home)
+			}
+			global := filepath.Join(home, ".gitconfig")
+			require.NoError(t, os.WriteFile(global, []byte("[user]\n\tname = call-site fixture\n"), 0600))
+			selected, decoy := t.TempDir(), newGitRepo(t)
+			t.Chdir(selected)
+			isolateBeadsDirForTest(t)
+			initConfigForTest(t)
+			resetRepoCachesForTest(t)
+			gitPath := filepath.Join(selected, ".git")
+			if name == "blocked_decoy" {
+				require.NoError(t, os.WriteFile(gitPath, []byte("occupied\n"), 0600))
+			}
+			storage := filepath.Join(t.TempDir(), "explicit-beads")
+			if name == "explicit_storage" {
+				t.Setenv("BEADS_DIR", storage)
+			}
+			before := map[string][]byte{}
+			for _, path := range []string{global, filepath.Join(decoy, ".git", "config"), filepath.Join(decoy, ".git", "HEAD")} {
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				before[path] = data
+			}
+			t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+			t.Setenv("GIT_WORK_TREE", decoy)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if name == "canceled" {
+				cancel()
+			}
+			// External mode skips the managed Dolt probe. The relative path stops
+			// after Git bootstrap, before .beads writes or database initialization.
+			err := runInitProxiedServer(&cobra.Command{}, ctx, initProxiedServerInput{
+				prefix: "bootstrap", quiet: true, externalConfig: &configfile.ExternalDoltConfig{},
+				serverRootPath: "stop-before-storage",
+			})
+			if name == "blocked_decoy" || name == "canceled" {
+				require.ErrorContains(t, err, "failed to initialize git repository:")
+				if name == "canceled" {
+					require.ErrorIs(t, err, context.Canceled)
+					_, statErr := os.Stat(gitPath)
+					require.ErrorIs(t, statErr, os.ErrNotExist)
+				} else {
+					data, readErr := os.ReadFile(gitPath)
+					require.NoError(t, readErr)
+					require.Equal(t, "occupied\n", string(data))
+				}
+			} else {
+				require.EqualError(t, err, `buildProxiedServerClientInfo: path "stop-before-storage" is not absolute`)
+				if name == "fresh_decoy" {
+					require.DirExists(t, gitPath)
+				} else {
+					_, statErr := os.Stat(gitPath)
+					require.ErrorIs(t, statErr, os.ErrNotExist)
+				}
+			}
+			for path, data := range before {
+				after, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				require.Equal(t, data, after, "changed unselected config: %s", path)
+			}
+			require.NoDirExists(t, filepath.Join(selected, ".beads"))
+			require.NoDirExists(t, storage)
+		})
+	}
+}
+
 func TestProxiedInitRemoteURLUsesSelectedProject(t *testing.T) {
 	// Serial: each fixture owns the process directory, environment and loaded config.
 	for _, entry := range os.Environ() {
@@ -462,6 +543,11 @@ func TestIsTeamServerManaged_RequiresProxiedServerMode(t *testing.T) {
 
 	cfg.DoltMode = configfile.DoltModeProxiedServer
 	assert.True(t, cfg.IsTeamServerManaged())
+}
+
+func TestProxiedInitTailRequiresGitContext(t *testing.T) {
+	err := runInitProxiedServerTail(&cobra.Command{}, t.Context(), initProxiedServerInput{}, runInitTailContext{})
+	require.EqualError(t, err, "proxied init tail requires a working directory or Git use case")
 }
 
 func TestProxiedInitTailRoleIgnoresInheritedGitRouting(t *testing.T) {

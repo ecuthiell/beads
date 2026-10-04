@@ -140,7 +140,7 @@ func runInitProxiedServer(cmd *cobra.Command, ctx context.Context, in initProxie
 	if !hasExplicitBeadsDir {
 		res, err := ensureProxiedInitGitRepo(ctx, cwd)
 		if err != nil {
-			return fmt.Errorf("failed to initialize git repository: %v", err)
+			return fmt.Errorf("failed to initialize git repository: %w", err)
 		}
 		if res.DidInit && !in.quiet {
 			fmt.Printf("  %s Initialized git repository\n", ui.RenderPass("✓"))
@@ -533,6 +533,9 @@ func runInitProxiedServerTail(cmd *cobra.Command, ctx context.Context, in initPr
 		// scrubbed routing, so dropping discovery ceilings can select a containing
 		// parent repository, matching the role adapter's scrubbed reads and writes.
 		gitUC = domain.NewGitUseCase(t.workDir, domaingit.NewInitGitRepository(t.workDir))
+	}
+	if gitUC == nil {
+		return fmt.Errorf("proxied init tail requires a working directory or Git use case")
 	}
 	// One probe answers both the role gate and the artifact gates: gitUC is the
 	// scrubbed selected-directory repository whenever workDir is set, and the
