@@ -33,6 +33,7 @@ func TestProxiedInitGitBootstrapUsesSelectedProject(t *testing.T) {
 			require.NoError(t, os.Unsetenv(key))
 		}
 	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	runGit := func(t *testing.T, dir string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
