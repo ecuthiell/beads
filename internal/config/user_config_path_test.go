@@ -9,6 +9,25 @@ import (
 	"testing"
 )
 
+func TestUserHomeValidationSourceForOS(t *testing.T) {
+	for _, tt := range []struct {
+		goos string
+		want string
+	}{
+		{"windows", "USERPROFILE"},
+		{"plan9", "home"},
+		{"linux", "HOME"},
+		{"darwin", "HOME"},
+		{"freebsd", "HOME"},
+	} {
+		t.Run(tt.goos, func(t *testing.T) {
+			if got := userHomeValidationSourceForOS(tt.goos); got != tt.want {
+				t.Errorf("home source for %s = %q, want %q", tt.goos, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUserConfigYamlPathNamesNativeEnvironmentSource(t *testing.T) {
 	t.Setenv("HOME", "~")
 	t.Setenv("USERPROFILE", "~")
@@ -74,10 +93,13 @@ func TestUserConfigYamlCandidatesOwnNativeDiagnostics(t *testing.T) {
 }
 
 func TestUserConfigYamlCandidatesShareDiagnosticGrammar(t *testing.T) {
+	homeSource := "HOME"
 	nativeSource := "HOME"
 	if runtime.GOOS == "windows" {
+		homeSource = "USERPROFILE"
 		nativeSource = "APPDATA"
 	} else if runtime.GOOS == "plan9" {
+		homeSource = "home"
 		nativeSource = "home"
 	}
 	homeResolutionErr := errors.New("home lookup failed")
@@ -92,14 +114,14 @@ func TestUserConfigYamlCandidatesShareDiagnosticGrammar(t *testing.T) {
 			name:       "relative paths",
 			home:       "relative \"home\"",
 			native:     "relative \"native\"",
-			wantHome:   "user home directory (HOME/USERPROFILE) \"relative \\\"home\\\"\" is not an absolute native path",
+			wantHome:   "user home directory (" + homeSource + ") \"relative \\\"home\\\"\" is not an absolute native path",
 			wantNative: "native user config directory (" + nativeSource + ") \"relative \\\"native\\\"\" is not an absolute native path",
 		},
 		{
 			name:       "resolver errors",
 			homeErr:    homeResolutionErr,
 			nativeErr:  nativeResolutionErr,
-			wantHome:   "user home directory (HOME/USERPROFILE): home lookup failed",
+			wantHome:   "user home directory (" + homeSource + "): home lookup failed",
 			wantNative: "native user config directory: config lookup failed",
 		},
 	} {
@@ -247,6 +269,7 @@ func TestRelativeUserRootsNeverReachImplicitOrExplicitFilesystemPaths(t *testing
 	t.Chdir(sentinel)
 	t.Setenv("HOME", "~")
 	t.Setenv("USERPROFILE", "~")
+	t.Setenv("home", "~")
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 	t.Setenv("XDG_CONFIG_HOME", "relative-xdg")
@@ -259,6 +282,16 @@ func TestRelativeUserRootsNeverReachImplicitOrExplicitFilesystemPaths(t *testing
 	if path != "" {
 		t.Fatalf("UserConfigYamlPath() returned unsafe path %q with error %v", path, err)
 	}
+	wantHomeLabel := "user home directory (HOME)"
+	switch runtime.GOOS {
+	case "windows":
+		wantHomeLabel = "user home directory (USERPROFILE)"
+	case "plan9":
+		wantHomeLabel = "user home directory (home)"
+	}
+	if !strings.Contains(err.Error(), wantHomeLabel) {
+		t.Errorf("UserConfigYamlPath error %q does not contain home label %q", err, wantHomeLabel)
+	}
 
 	if got := GetUserYamlConfig("metrics.disabled"); got != "" {
 		t.Fatalf("implicit read = %q, want absent value on resolution failure", got)
@@ -270,12 +303,10 @@ func TestRelativeUserRootsNeverReachImplicitOrExplicitFilesystemPaths(t *testing
 	if setErr == nil {
 		t.Fatal("SetUserYamlConfig returned nil error for unsafe roots")
 	}
-	for _, variable := range []string{"HOME", "USERPROFILE"} {
-		if !strings.Contains(setErr.Error(), variable) {
-			t.Errorf("SetUserYamlConfig error %q does not name %s", setErr, variable)
-		}
+	if !strings.Contains(setErr.Error(), wantHomeLabel) {
+		t.Errorf("SetUserYamlConfig error %q does not contain home label %q", setErr, wantHomeLabel)
 	}
-	if err := UnsetUserYamlConfig("metrics.disabled"); err == nil {
+	if _, err := UnsetUserYamlConfig("metrics.disabled"); err == nil {
 		t.Fatal("UnsetUserYamlConfig returned nil error for unsafe roots")
 	}
 
